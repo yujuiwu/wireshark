@@ -476,6 +476,7 @@ private slots:
     void on_actionSCTPFilterThisAssociation_triggered();
     void statCommandMulticastStatistics(const char *arg, void *);
 
+    void statCommandWlanConnectionTimeline(const char *arg, void *);
     void statCommandWlanStatistics(const char *arg, void *);
 
     void openStatisticsTreeDialog(const char *abbr);

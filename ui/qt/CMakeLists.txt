@@ -283,6 +283,7 @@ set(WIRESHARK_QT_HEADERS
 	wireshark_application.h
 	wireshark_dialog.h
 	wireshark_main_window.h
+	wlan_connection_timeline_dialog.h
 	wlan_statistics_dialog.h
 	${WIRESHARK_CUSTOM_QT_HEADERS}
 )
@@ -585,6 +586,7 @@ set(WIRESHARK_QT_TAP_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/sctp_all_assocs_dialog.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/sctp_assoc_analyse_dialog.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/stats_tree_dialog.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/wlan_connection_timeline_dialog.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/wlan_statistics_dialog.cpp
 	${WIRESHARK_CUSTOM_TAP_SRC}
 )

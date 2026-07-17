@@ -164,6 +164,7 @@ DIAG_ON(frame-larger-than=)
 #include "time_shift_dialog.h"
 #include "uat_dialog.h"
 #include "voip_calls_dialog.h"
+#include "wlan_connection_timeline_dialog.h"
 #include "wlan_statistics_dialog.h"
 #include <ui/qt/widgets/wireless_timeline.h>
 
@@ -3453,6 +3454,16 @@ void WiresharkMainWindow::statCommandWlanStatistics(const char *arg, void *)
     connect(wlan_stats_dlg, &WlanStatisticsDialog::filterAction, this, &WiresharkMainWindow::filterAction);
 }
 
+// -z wlan,connection
+void WiresharkMainWindow::statCommandWlanConnectionTimeline(const char *arg, void *)
+{
+    WlanConnectionTimelineDialog *timeline_dialog =
+            new WlanConnectionTimelineDialog(*this, capture_file_, arg);
+    timeline_dialog->show();
+    connect(timeline_dialog, &WlanConnectionTimelineDialog::filterAction,
+            this, &WiresharkMainWindow::filterAction);
+}
+
 // -z expert
 void WiresharkMainWindow::statCommandExpertInfo(const char *, void *)
 {
@@ -3995,6 +4006,8 @@ void WiresharkMainWindow::connectWirelessMenuActions()
     });
 
     connect(main_ui_->actionWirelessWlanStatistics, &QAction::triggered, this, [=]() { statCommandWlanStatistics(NULL, NULL); });
+    connect(main_ui_->actionWirelessWlanConnectionTimeline, &QAction::triggered,
+            this, [=]() { statCommandWlanConnectionTimeline(NULL, NULL); });
 }
 
 // Tools Menu

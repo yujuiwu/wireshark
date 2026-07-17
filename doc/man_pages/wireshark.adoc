@@ -937,6 +937,10 @@ Example: *-z voip,calls*
 *-z* wlan,stat[,<filter>]::
 Show IEEE 802.11 network and station statistics.
 
+*-z* wlan,connection[,<filter>]::
+Show an IEEE 802.11 connection timeline with discovery, authentication,
+association, key exchange, and disconnect events.
+
 *-z* wsp,stat[,<filter>]::
 Show WSP packet counters.
 

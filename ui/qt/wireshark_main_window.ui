@@ -719,6 +719,7 @@
     <addaction name="actionBluetoothHCI_Summary"/>
     <addaction name="separator"/>
     <addaction name="actionWirelessWlanStatistics"/>
+    <addaction name="actionWirelessWlanConnectionTimeline"/>
    </widget>
    <widget class="QMenu" name="menuTools">
     <property name="title">
@@ -3054,6 +3055,14 @@
    </property>
    <property name="toolTip">
     <string>Show IEEE 802.11 wireless LAN statistics.</string>
+   </property>
+  </action>
+  <action name="actionWirelessWlanConnectionTimeline">
+   <property name="text">
+    <string>Wi-Fi Connection Timeline</string>
+   </property>
+   <property name="toolTip">
+    <string>Show IEEE 802.11 connection discovery, authentication, association, and key exchange events.</string>
    </property>
   </action>
   <action name="actionNewDisplayFilterExpression">
