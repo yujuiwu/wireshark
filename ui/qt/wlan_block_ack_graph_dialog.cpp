@@ -275,6 +275,7 @@ public:
 
     QComboBox *station_pair_combo = nullptr;
     QComboBox *tid_combo = nullptr;
+    QCheckBox *show_ssn_labels = nullptr;
     QCheckBox *show_holes = nullptr;
     QCustomPlot *plot = nullptr;
     QLabel *details_label = nullptr;
@@ -315,6 +316,12 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->tid_combo->setObjectName(QStringLiteral("tidComboBox"));
     d_->tid_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     tid_label->setBuddy(d_->tid_combo);
+    d_->show_ssn_labels = new QCheckBox(tr("Show SSN labels"), this);
+    d_->show_ssn_labels->setObjectName(QStringLiteral("showSsnLabelsCheckBox"));
+    d_->show_ssn_labels->setChecked(true);
+    d_->show_ssn_labels->setToolTip(
+                tr("Show the numeric starting sequence number (SSN) below each blue BA point. "
+                   "The blue BA starting-sequence trace remains visible."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(true);
@@ -324,6 +331,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     session_layout->addWidget(d_->station_pair_combo, 1);
     session_layout->addWidget(tid_label);
     session_layout->addWidget(d_->tid_combo);
+    session_layout->addWidget(d_->show_ssn_labels);
     session_layout->addWidget(d_->show_holes);
     main_layout->addLayout(session_layout);
 
@@ -425,6 +433,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::stationPairChanged);
     connect(d_->tid_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &WlanBlockAckGraphDialog::tidChanged);
+    connect(d_->show_ssn_labels, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::ssnLabelsToggled);
     connect(d_->show_holes, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
@@ -718,6 +728,10 @@ void WlanBlockAckGraphDialog::drawSession()
 {
     uint32_t preferred_frame = d_->selected_frame > 0
             ? d_->selected_frame : d_->initially_selected_frame;
+    QCPLayer *ssn_label_layer = d_->plot->layer(QStringLiteral("baSsnLabels"));
+    if (ssn_label_layer) {
+        ssn_label_layer->setVisible(d_->show_ssn_labels->isChecked());
+    }
     for (QCPItemText *label : d_->ssn_labels) {
         d_->plot->removeItem(label);
     }
@@ -735,6 +749,7 @@ void WlanBlockAckGraphDialog::drawSession()
 
     int session_index = currentSessionIndex();
     if (session_index < 0 || session_index >= d_->sessions.size()) {
+        d_->show_ssn_labels->setEnabled(false);
         d_->show_holes->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Save)->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(false);
@@ -753,6 +768,7 @@ void WlanBlockAckGraphDialog::drawSession()
         return;
     }
 
+    d_->show_ssn_labels->setEnabled(true);
     d_->show_holes->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Save)->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(true);
@@ -951,6 +967,15 @@ void WlanBlockAckGraphDialog::stationPairChanged(int)
 void WlanBlockAckGraphDialog::tidChanged(int)
 {
     drawSession();
+}
+
+void WlanBlockAckGraphDialog::ssnLabelsToggled(bool checked)
+{
+    QCPLayer *label_layer = d_->plot->layer(QStringLiteral("baSsnLabels"));
+    if (label_layer) {
+        label_layer->setVisible(checked);
+    }
+    d_->plot->replot();
 }
 
 void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
