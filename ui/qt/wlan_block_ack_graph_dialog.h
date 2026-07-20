@@ -48,6 +48,7 @@ private:
     void drawTimeDeltaLabels();
     void showSampleDetails(int data_index);
     void showRequestDetails(int data_index);
+    void showMpduDetails(int data_index);
     int anchorIndexForPlottable(QCPAbstractPlottable *plottable, int data_index) const;
     void zoomXAxis(bool in);
     void zoomYAxis(bool in);
@@ -58,6 +59,7 @@ private slots:
     void ssnLabelsToggled(bool checked);
     void timeDeltasToggled(bool checked);
     void ackGapsToggled(bool checked);
+    void mpdusToggled(bool checked);
     void bitmapHolesToggled(bool checked);
     void plotClicked(QCPAbstractPlottable *plottable, int data_index, QMouseEvent *event);
     void resetAxes();
