@@ -43,6 +43,21 @@ constexpr uint32_t basic_block_ack = 0;
 constexpr uint32_t extended_compressed_block_ack = 1;
 constexpr uint32_t compressed_block_ack = 2;
 constexpr uint32_t multi_tid_block_ack = 3;
+constexpr int sequence_modulus = 4096;
+constexpr int sequence_half_range = sequence_modulus / 2;
+
+class SequenceNumberAxisTicker : public QCPAxisTickerFixed
+{
+protected:
+    QString getTickLabel(double tick, const QLocale &, QChar, int) override
+    {
+        qint64 sequence = qRound64(tick) % sequence_modulus;
+        if (sequence < 0) {
+            sequence += sequence_modulus;
+        }
+        return QString::number(sequence);
+    }
+};
 
 using FieldIds = QVector<int>;
 using FieldInfos = QVector<const field_info *>;
@@ -162,6 +177,15 @@ static QString blockAckTypeName(uint32_t type)
     }
 }
 
+static int unwrapSequence(uint32_t sequence, uint32_t previous_sequence,
+                          int previous_unwrapped)
+{
+    int delta = (static_cast<int>(sequence) - static_cast<int>(previous_sequence) +
+                 sequence_half_range) & (sequence_modulus - 1);
+    delta -= sequence_half_range;
+    return previous_unwrapped + delta;
+}
+
 static bool bitmapPositionSet(const BaSample &sample, int position)
 {
     const uint8_t *bitmap = reinterpret_cast<const uint8_t *>(sample.bitmap.constData());
@@ -244,6 +268,7 @@ public:
     QVector<BaStaPair> sta_pairs;
     QHash<QString, int> session_indexes;
     QVector<int> anchor_sample_indexes;
+    QVector<int> anchor_unwrapped_sequences;
     QVector<int> set_anchor_indexes;
     QVector<int> hole_anchor_indexes;
     QVector<QCPItemText *> ssn_labels;
@@ -321,7 +346,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->plot->xAxis->setTicker(QSharedPointer<QCPAxisTickerSi>(
                                    new QCPAxisTickerSi(FORMAT_SIZE_UNIT_SECONDS)));
     d_->plot->xAxis->setNumberPrecision(9);
-    d_->plot->yAxis->setLabel(tr("Sequence number (12-bit)"));
+    d_->plot->yAxis->setLabel(tr("Sequence number (12-bit; labels modulo 4096)"));
+    QSharedPointer<QCPAxisTickerFixed> sequence_ticker(new SequenceNumberAxisTicker);
+    sequence_ticker->setTickStep(1.0);
+    sequence_ticker->setScaleStrategy(QCPAxisTickerFixed::ssMultiples);
+    d_->plot->yAxis->setTicker(sequence_ticker);
     d_->plot->legend->setVisible(true);
     main_layout->addWidget(d_->plot, 1);
 
@@ -699,6 +728,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->set_graph->data()->clear();
     d_->hole_graph->data()->clear();
     d_->anchor_sample_indexes.clear();
+    d_->anchor_unwrapped_sequences.clear();
     d_->set_anchor_indexes.clear();
     d_->hole_anchor_indexes.clear();
     d_->selected_frame = 0;
@@ -735,22 +765,36 @@ void WlanBlockAckGraphDialog::drawSession()
     QVector<double> set_sequences;
     QVector<double> hole_times;
     QVector<double> hole_sequences;
+    uint32_t previous_sequence = 0;
+    int previous_unwrapped = 0;
+    bool have_previous = false;
+
     for (int sample_index = 0; sample_index < session.samples.size(); sample_index++) {
         const BaSample &sample = session.samples.at(sample_index);
+        int unwrapped = static_cast<int>(sample.starting_sequence);
+        if (have_previous) {
+            unwrapped = unwrapSequence(sample.starting_sequence, previous_sequence,
+                                       previous_unwrapped);
+        }
+        previous_sequence = sample.starting_sequence;
+        previous_unwrapped = unwrapped;
+        have_previous = true;
+
         anchor_times.append(sample.relative_time);
-        anchor_sequences.append(sample.starting_sequence);
+        anchor_sequences.append(unwrapped);
         d_->anchor_sample_indexes.append(sample_index);
+        d_->anchor_unwrapped_sequences.append(unwrapped);
         int anchor_index = static_cast<int>(d_->anchor_sample_indexes.size()) - 1;
 
         int positions = bitmapPositionCount(sample);
         window_upper_times.append(sample.relative_time);
-        window_upper_sequences.append(sample.starting_sequence + positions);
+        window_upper_sequences.append(unwrapped + positions);
 
         QCPItemText *ssn_label = new QCPItemText(d_->plot);
         ssn_label->setObjectName(
                     QStringLiteral("baSsnLabel_%1").arg(sample.frame_number));
         ssn_label->position->setAxes(d_->plot->xAxis, d_->plot->yAxis);
-        ssn_label->position->setCoords(sample.relative_time, sample.starting_sequence);
+        ssn_label->position->setCoords(sample.relative_time, unwrapped);
         ssn_label->setText(QString::number(sample.starting_sequence));
         ssn_label->setPositionAlignment(Qt::AlignHCenter | Qt::AlignTop);
         ssn_label->setTextAlignment(Qt::AlignHCenter);
@@ -778,11 +822,11 @@ void WlanBlockAckGraphDialog::drawSession()
         for (int position = 0; position <= highest_set; position++) {
             if (bitmapPositionSet(sample, position)) {
                 set_times.append(sample.relative_time);
-                set_sequences.append(sample.starting_sequence + position);
+                set_sequences.append(unwrapped + position);
                 d_->set_anchor_indexes.append(anchor_index);
             } else {
                 hole_times.append(sample.relative_time);
-                hole_sequences.append(sample.starting_sequence + position);
+                hole_sequences.append(unwrapped + position);
                 d_->hole_anchor_indexes.append(anchor_index);
             }
         }
@@ -831,7 +875,9 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
     d_->selected_frame = sample.frame_number;
 
     int window_positions = bitmapPositionCount(sample);
-    int upper_bound = static_cast<int>(sample.starting_sequence) + window_positions;
+    int unwrapped_upper_bound = d_->anchor_unwrapped_sequences.at(data_index) +
+            window_positions;
+    uint32_t upper_bound = (sample.starting_sequence + window_positions) & 0x0fff;
     int set_positions = 0;
     for (int position = 0; position < window_positions; position++) {
         set_positions += bitmapPositionSet(sample, position) ? 1 : 0;
@@ -851,16 +897,18 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
     }
 
     d_->details_label->setText(
-                tr("Frame %1 · %2 BA · TA %3 → RA %4 · TID %5 · SSN %6 · "
-                   "window upper bound %7 (exclusive) · %8. "
-                   "Click a BA point to go to this frame.")
+                tr("Frame %1 · %2 BA · TA %3 → RA %4 · TID %5 · SSN %6 "
+                   "(unwrapped %7) · window upper bound %8 (unwrapped %9, exclusive) · "
+                   "%10. Click a BA point to go to this frame.")
                 .arg(sample.frame_number)
                 .arg(blockAckTypeName(sample.type))
                 .arg(d_->sessions.at(session_index).ta,
                      d_->sessions.at(session_index).ra)
                 .arg(sample.tid)
                 .arg(sample.starting_sequence)
+                .arg(d_->anchor_unwrapped_sequences.at(data_index))
                 .arg(upper_bound)
+                .arg(unwrapped_upper_bound)
                 .arg(bitmap_detail));
 
     d_->anchor_graph->setSelection(
