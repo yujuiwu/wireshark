@@ -44,6 +44,8 @@ private:
     void populateTids(int preferred_session = -1, int preferred_tid = -1);
     int currentSessionIndex() const;
     void drawSession();
+    void clearTimeDeltaLabels();
+    void drawTimeDeltaLabels();
     void showSampleDetails(int data_index);
     int anchorIndexForPlottable(QCPAbstractPlottable *plottable, int data_index) const;
     void zoomXAxis(bool in);
@@ -53,6 +55,7 @@ private slots:
     void stationPairChanged(int pair_index);
     void tidChanged(int tid_index);
     void ssnLabelsToggled(bool checked);
+    void timeDeltasToggled(bool checked);
     void bitmapHolesToggled(bool checked);
     void plotClicked(QCPAbstractPlottable *plottable, int data_index, QMouseEvent *event);
     void resetAxes();

@@ -16,6 +16,8 @@
 #include <epan/packet.h>
 #include <epan/proto.h>
 
+#include <wsutil/str_util.h>
+
 #include <QAction>
 #include <QByteArray>
 #include <QCheckBox>
@@ -58,6 +60,14 @@ protected:
         return QString::number(sequence);
     }
 };
+
+static QString timeDeltaLabel(double seconds)
+{
+    QString elapsed = gchar_free_to_qstring(
+                format_units(nullptr, seconds, FORMAT_SIZE_UNIT_SECONDS,
+                             FORMAT_SIZE_PREFIX_SI, 3));
+    return QObject::tr("Δt %1").arg(elapsed);
+}
 
 using FieldIds = QVector<int>;
 using FieldInfos = QVector<const field_info *>;
@@ -272,10 +282,12 @@ public:
     QVector<int> set_anchor_indexes;
     QVector<int> hole_anchor_indexes;
     QVector<QCPItemText *> ssn_labels;
+    QVector<QCPItemText *> time_delta_labels;
 
     QComboBox *station_pair_combo = nullptr;
     QComboBox *tid_combo = nullptr;
     QCheckBox *show_ssn_labels = nullptr;
+    QCheckBox *show_time_deltas = nullptr;
     QCheckBox *show_holes = nullptr;
     QCustomPlot *plot = nullptr;
     QLabel *details_label = nullptr;
@@ -322,6 +334,12 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_ssn_labels->setToolTip(
                 tr("Show the numeric starting sequence number (SSN) below each blue BA point. "
                    "The blue BA starting-sequence trace remains visible."));
+    d_->show_time_deltas = new QCheckBox(tr("Show BA time deltas"), this);
+    d_->show_time_deltas->setObjectName(QStringLiteral("showBaTimeDeltasCheckBox"));
+    d_->show_time_deltas->setChecked(false);
+    d_->show_time_deltas->setToolTip(
+                tr("Show the elapsed time since the previous BA in the selected STA pair and "
+                   "TID above the blue segment between them. The first BA has no time delta."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(true);
@@ -332,6 +350,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     session_layout->addWidget(tid_label);
     session_layout->addWidget(d_->tid_combo);
     session_layout->addWidget(d_->show_ssn_labels);
+    session_layout->addWidget(d_->show_time_deltas);
     session_layout->addWidget(d_->show_holes);
     main_layout->addLayout(session_layout);
 
@@ -350,6 +369,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "X / Shift+X and Y / Shift+Y."));
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
                        QCustomPlot::limBelow);
+    d_->plot->addLayer(QStringLiteral("baTimeDeltaLabels"),
+                       d_->plot->layer(QStringLiteral("main")), QCustomPlot::limBelow);
     d_->plot->xAxis->setLabel(tr("Time"));
     d_->plot->xAxis->setTicker(QSharedPointer<QCPAxisTickerSi>(
                                    new QCPAxisTickerSi(FORMAT_SIZE_UNIT_SECONDS)));
@@ -435,6 +456,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::tidChanged);
     connect(d_->show_ssn_labels, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::ssnLabelsToggled);
+    connect(d_->show_time_deltas, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::timeDeltasToggled);
     connect(d_->show_holes, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
@@ -732,6 +755,7 @@ void WlanBlockAckGraphDialog::drawSession()
     if (ssn_label_layer) {
         ssn_label_layer->setVisible(d_->show_ssn_labels->isChecked());
     }
+    clearTimeDeltaLabels();
     for (QCPItemText *label : d_->ssn_labels) {
         d_->plot->removeItem(label);
     }
@@ -750,6 +774,7 @@ void WlanBlockAckGraphDialog::drawSession()
     int session_index = currentSessionIndex();
     if (session_index < 0 || session_index >= d_->sessions.size()) {
         d_->show_ssn_labels->setEnabled(false);
+        d_->show_time_deltas->setEnabled(false);
         d_->show_holes->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Save)->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(false);
@@ -769,6 +794,7 @@ void WlanBlockAckGraphDialog::drawSession()
     }
 
     d_->show_ssn_labels->setEnabled(true);
+    d_->show_time_deltas->setEnabled(true);
     d_->show_holes->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Save)->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(true);
@@ -853,6 +879,10 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->set_graph->setData(set_times, set_sequences, true);
     d_->hole_graph->setData(hole_times, hole_sequences, true);
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
+    if (d_->show_time_deltas->isChecked()) {
+        drawTimeDeltaLabels();
+    }
+
     d_->status_label->setText(
                 tr("%1 session(s) · %2 BA(s) in this session · %3 bitmap-set position(s) · "
                    "%4 bitmap hole(s) · %5 unsupported BA frame(s) · %6 malformed")
@@ -876,6 +906,52 @@ void WlanBlockAckGraphDialog::drawSession()
         showSampleDetails(details_index);
     }
     resetAxes();
+}
+
+void WlanBlockAckGraphDialog::clearTimeDeltaLabels()
+{
+    for (QCPItemText *label : d_->time_delta_labels) {
+        d_->plot->removeItem(label);
+    }
+    d_->time_delta_labels.clear();
+}
+
+void WlanBlockAckGraphDialog::drawTimeDeltaLabels()
+{
+    int session_index = currentSessionIndex();
+    if (session_index < 0 || session_index >= d_->sessions.size()) {
+        return;
+    }
+
+    const QVector<BaSample> &samples = d_->sessions.at(session_index).samples;
+    qsizetype sample_count = std::min(samples.size(), d_->anchor_unwrapped_sequences.size());
+    for (qsizetype sample_index = 1; sample_index < sample_count; sample_index++) {
+        const BaSample &previous = samples.at(sample_index - 1);
+        const BaSample &sample = samples.at(sample_index);
+        double delta = sample.relative_time - previous.relative_time;
+
+        QCPItemText *delta_label = new QCPItemText(d_->plot);
+        delta_label->setObjectName(
+                    QStringLiteral("baTimeDeltaLabel_%1").arg(sample.frame_number));
+        delta_label->position->setAxes(d_->plot->xAxis, d_->plot->yAxis);
+        delta_label->position->setCoords(previous.relative_time + delta / 2.0,
+                                         d_->anchor_unwrapped_sequences.at(sample_index - 1));
+        delta_label->setText(timeDeltaLabel(delta));
+        delta_label->setPositionAlignment(Qt::AlignHCenter | Qt::AlignBottom);
+        delta_label->setTextAlignment(Qt::AlignHCenter);
+        delta_label->setPadding(QMargins(0, 0, 0, 5));
+        QFont label_font = d_->plot->font();
+        label_font.setPointSize(8);
+        delta_label->setFont(label_font);
+        delta_label->setColor(QColor(tango_plum_5));
+        delta_label->setPen(Qt::NoPen);
+        delta_label->setBrush(Qt::NoBrush);
+        delta_label->setSelectable(false);
+        delta_label->setClipAxisRect(d_->plot->axisRect());
+        delta_label->setClipToAxisRect(true);
+        delta_label->setLayer(QStringLiteral("baTimeDeltaLabels"));
+        d_->time_delta_labels.append(delta_label);
+    }
 }
 
 void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
@@ -974,6 +1050,15 @@ void WlanBlockAckGraphDialog::ssnLabelsToggled(bool checked)
     QCPLayer *label_layer = d_->plot->layer(QStringLiteral("baSsnLabels"));
     if (label_layer) {
         label_layer->setVisible(checked);
+    }
+    d_->plot->replot();
+}
+
+void WlanBlockAckGraphDialog::timeDeltasToggled(bool checked)
+{
+    clearTimeDeltaLabels();
+    if (checked) {
+        drawTimeDeltaLabels();
     }
     d_->plot->replot();
 }
