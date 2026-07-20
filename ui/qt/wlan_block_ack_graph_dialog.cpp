@@ -293,6 +293,7 @@ public:
     QComboBox *tid_combo = nullptr;
     QCheckBox *show_ssn_labels = nullptr;
     QCheckBox *show_time_deltas = nullptr;
+    QCheckBox *show_ack_gaps = nullptr;
     QCheckBox *show_holes = nullptr;
     QCustomPlot *plot = nullptr;
     QLabel *details_label = nullptr;
@@ -303,6 +304,7 @@ public:
     QCPGraph *window_upper_graph = nullptr;
     QCPGraph *set_graph = nullptr;
     QCPGraph *hole_graph = nullptr;
+    QCPGraph *advance_span_graph = nullptr;
 
     uint32_t initially_selected_frame = 0;
     uint32_t selected_frame = 0;
@@ -352,6 +354,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_time_deltas->setToolTip(
                 tr("Show the elapsed time since the previous BA in the selected STA pair and "
                    "TID above the blue segment between them. The first BA has no time delta."));
+    d_->show_ack_gaps = new QCheckBox(tr("Show BA ACK gaps"), this);
+    d_->show_ack_gaps->setObjectName(QStringLiteral("showBaAckGapsCheckBox"));
+    d_->show_ack_gaps->setChecked(true);
+    d_->show_ack_gaps->setToolTip(
+                tr("Show sequence numbers for which no acknowledgment was observed in a BA "
+                   "before a later BA SSN advanced past them. This uses Block Ack evidence "
+                   "only and does not prove that an MPDU was transmitted or lost."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(true);
@@ -363,6 +372,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     session_layout->addWidget(d_->tid_combo);
     session_layout->addWidget(d_->show_ssn_labels);
     session_layout->addWidget(d_->show_time_deltas);
+    session_layout->addWidget(d_->show_ack_gaps);
     session_layout->addWidget(d_->show_holes);
     main_layout->addLayout(session_layout);
 
@@ -378,7 +388,9 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->plot->setToolTip(
                 tr("Drag to pan. Use the wheel over the plot to zoom both axes, or wheel and "
                    "drag directly over an axis to change only that axis. Shortcuts: "
-                   "X / Shift+X and Y / Shift+Y."));
+                   "X / Shift+X and Y / Shift+Y. When enabled, gray dots mark sequence numbers "
+                   "for which no acknowledgment was observed before a later BA SSN advanced "
+                   "past them."));
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
                        QCustomPlot::limBelow);
     d_->plot->addLayer(QStringLiteral("baTimeDeltaLabels"),
@@ -437,6 +449,16 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                                                      QColor(tango_scarlet_red_3), 7));
     d_->hole_graph->setSelectable(QCP::stNone);
 
+    d_->advance_span_graph = d_->plot->addGraph();
+    d_->advance_span_graph->setObjectName(QStringLiteral("baSsnAdvanceSpanGraph"));
+    d_->advance_span_graph->setName(tr("No BA ACK before SSN advance"));
+    d_->advance_span_graph->setLineStyle(QCPGraph::lsNone);
+    d_->advance_span_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDisc,
+                                QColor(tango_aluminium_6),
+                                QColor(tango_aluminium_4), 7));
+    d_->advance_span_graph->setSelectable(QCP::stNone);
+
     d_->details_label = new QLabel(
                 tr("Only Block Ack responses and requests are analyzed; data frames are not. "
                    "Bitmap zeros mean “not acknowledged in this BA”; they do not prove "
@@ -481,6 +503,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::ssnLabelsToggled);
     connect(d_->show_time_deltas, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::timeDeltasToggled);
+    connect(d_->show_ack_gaps, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::ackGapsToggled);
     connect(d_->show_holes, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
@@ -823,6 +847,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
     d_->hole_graph->data()->clear();
+    d_->advance_span_graph->data()->clear();
     d_->anchor_sample_indexes.clear();
     d_->anchor_unwrapped_sequences.clear();
     d_->request_sample_indexes.clear();
@@ -835,6 +860,7 @@ void WlanBlockAckGraphDialog::drawSession()
     if (session_index < 0 || session_index >= d_->sessions.size()) {
         d_->show_ssn_labels->setEnabled(false);
         d_->show_time_deltas->setEnabled(false);
+        d_->show_ack_gaps->setEnabled(false);
         d_->show_holes->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Save)->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(false);
@@ -866,6 +892,7 @@ void WlanBlockAckGraphDialog::drawSession()
     bool have_responses = response_count > 0;
     d_->show_ssn_labels->setEnabled(have_responses);
     d_->show_time_deltas->setEnabled(have_responses);
+    d_->show_ack_gaps->setEnabled(have_responses);
     d_->show_holes->setEnabled(have_responses);
     d_->button_box->button(QDialogButtonBox::Save)->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(true);
@@ -879,20 +906,23 @@ void WlanBlockAckGraphDialog::drawSession()
     QVector<double> set_sequences;
     QVector<double> hole_times;
     QVector<double> hole_sequences;
-    uint32_t previous_sequence = 0;
-    int previous_unwrapped = 0;
-    bool have_previous = false;
+    QVector<double> advance_span_times;
+    QVector<double> advance_span_sequences;
+    // Exclusive frontier: the first trailing sequence without an observed BA ACK.
+    int next_sequence_after_highest_ack = 0;
+    bool have_ack_frontier = false;
+    // BARs are plotted near the latest BA but must not affect BA unwrapping or analysis.
+    uint32_t previous_ba_sequence = 0;
+    int previous_ba_unwrapped = 0;
+    bool have_previous_ba = false;
 
     for (int sample_index = 0; sample_index < session.samples.size(); sample_index++) {
         const BaSample &sample = session.samples.at(sample_index);
         int unwrapped = static_cast<int>(sample.starting_sequence);
-        if (have_previous) {
-            unwrapped = unwrapSequence(sample.starting_sequence, previous_sequence,
-                                       previous_unwrapped);
+        if (have_previous_ba) {
+            unwrapped = unwrapSequence(sample.starting_sequence, previous_ba_sequence,
+                                       previous_ba_unwrapped);
         }
-        previous_sequence = sample.starting_sequence;
-        previous_unwrapped = unwrapped;
-        have_previous = true;
 
         if (sample.is_request) {
             request_times.append(sample.relative_time);
@@ -902,6 +932,12 @@ void WlanBlockAckGraphDialog::drawSession()
             continue;
         }
 
+        bool ba_ssn_moved_backward = have_previous_ba &&
+                unwrapped < previous_ba_unwrapped;
+        previous_ba_sequence = sample.starting_sequence;
+        previous_ba_unwrapped = unwrapped;
+        have_previous_ba = true;
+
         anchor_times.append(sample.relative_time);
         anchor_sequences.append(unwrapped);
         d_->anchor_sample_indexes.append(sample_index);
@@ -909,8 +945,25 @@ void WlanBlockAckGraphDialog::drawSession()
         int anchor_index = static_cast<int>(d_->anchor_sample_indexes.size()) - 1;
 
         int positions = bitmapPositionCount(sample);
+        // The same TA/RA/TID can start a new BA epoch later in the capture.
+        // A backward window wholly below the ACK frontier cannot extend the
+        // current epoch, so start a new frontier. Modulo wrap has already been
+        // unwrapped forward and does not satisfy this condition.
+        if (have_ack_frontier && ba_ssn_moved_backward &&
+            unwrapped + positions <= next_sequence_after_highest_ack) {
+            next_sequence_after_highest_ack = 0;
+            have_ack_frontier = false;
+        }
         window_upper_times.append(sample.relative_time);
         window_upper_sequences.append(unwrapped + positions);
+
+        if (have_ack_frontier && unwrapped > next_sequence_after_highest_ack) {
+            for (int sequence = next_sequence_after_highest_ack;
+                 sequence < unwrapped; sequence++) {
+                advance_span_times.append(sample.relative_time);
+                advance_span_sequences.append(sequence);
+            }
+        }
 
         QCPItemText *ssn_label = new QCPItemText(d_->plot);
         ssn_label->setObjectName(
@@ -941,6 +994,17 @@ void WlanBlockAckGraphDialog::drawSession()
             }
         }
 
+        int sample_next_sequence_after_highest_ack = highest_set >= 0
+                ? unwrapped + highest_set + 1 : unwrapped;
+        if (have_ack_frontier) {
+            next_sequence_after_highest_ack = std::max(
+                        next_sequence_after_highest_ack,
+                        sample_next_sequence_after_highest_ack);
+        } else {
+            next_sequence_after_highest_ack = sample_next_sequence_after_highest_ack;
+            have_ack_frontier = true;
+        }
+
         for (int position = 0; position <= highest_set; position++) {
             if (bitmapPositionSet(sample, position)) {
                 set_times.append(sample.relative_time);
@@ -959,6 +1023,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->window_upper_graph->setData(window_upper_times, window_upper_sequences, true);
     d_->set_graph->setData(set_times, set_sequences, true);
     d_->hole_graph->setData(hole_times, hole_sequences, true);
+    d_->advance_span_graph->setData(advance_span_times, advance_span_sequences, true);
+    d_->advance_span_graph->setVisible(d_->show_ack_gaps->isChecked());
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
     if (d_->show_time_deltas->isChecked()) {
         drawTimeDeltaLabels();
@@ -967,12 +1033,14 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->status_label->setText(
                 tr("%1 session(s) · %2 BA / %3 BAR in this session · "
                    "%4 bitmap-set position(s) · %5 bitmap hole(s) · "
-                   "%6/%7 unsupported BA/BAR · %8/%9 malformed BA/BAR")
+                   "%6 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "%7/%8 unsupported BA/BAR · %9/%10 malformed BA/BAR")
                 .arg(d_->sessions.size())
                 .arg(response_count)
                 .arg(request_count)
                 .arg(set_times.size())
                 .arg(hole_times.size())
+                .arg(advance_span_times.size())
                 .arg(d_->unsupported_ba_frames)
                 .arg(d_->unsupported_bar_frames)
                 .arg(d_->malformed_ba_frames)
@@ -1198,6 +1266,12 @@ void WlanBlockAckGraphDialog::timeDeltasToggled(bool checked)
     d_->plot->replot();
 }
 
+void WlanBlockAckGraphDialog::ackGapsToggled(bool checked)
+{
+    d_->advance_span_graph->setVisible(checked);
+    d_->plot->replot();
+}
+
 void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
 {
     d_->hole_graph->setVisible(checked);
@@ -1288,7 +1362,8 @@ void WlanBlockAckGraphDialog::resetAxes()
     QCPRange y_range;
     const QVector<QCPGraph *> value_graphs = {
         d_->anchor_graph, d_->request_graph, d_->window_upper_graph, d_->set_graph,
-        d_->show_holes->isChecked() ? d_->hole_graph : nullptr
+        d_->show_holes->isChecked() ? d_->hole_graph : nullptr,
+        d_->show_ack_gaps->isChecked() ? d_->advance_span_graph : nullptr
     };
     for (QCPGraph *graph : value_graphs) {
         if (!graph) {

@@ -57,6 +57,7 @@ private slots:
     void tidChanged(int tid_index);
     void ssnLabelsToggled(bool checked);
     void timeDeltasToggled(bool checked);
+    void ackGapsToggled(bool checked);
     void bitmapHolesToggled(bool checked);
     void plotClicked(QCPAbstractPlottable *plottable, int data_index, QMouseEvent *event);
     void resetAxes();
