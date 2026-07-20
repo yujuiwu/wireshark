@@ -385,7 +385,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     tid_label->setBuddy(d_->tid_combo);
     d_->show_ssn_labels = new QCheckBox(tr("Show SSN labels"), this);
     d_->show_ssn_labels->setObjectName(QStringLiteral("showSsnLabelsCheckBox"));
-    d_->show_ssn_labels->setChecked(true);
+    d_->show_ssn_labels->setChecked(false);
     d_->show_ssn_labels->setToolTip(
                 tr("Show the numeric starting sequence number (SSN) below each blue BA point. "
                    "The blue BA starting-sequence trace remains visible."));
@@ -397,21 +397,21 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "TID above the blue segment between them. The first BA has no time delta."));
     d_->show_ack_gaps = new QCheckBox(tr("Show BA ACK gaps"), this);
     d_->show_ack_gaps->setObjectName(QStringLiteral("showBaAckGapsCheckBox"));
-    d_->show_ack_gaps->setChecked(true);
+    d_->show_ack_gaps->setChecked(false);
     d_->show_ack_gaps->setToolTip(
                 tr("Show sequence numbers for which no acknowledgment was observed in a BA "
                    "before a later BA SSN advanced past them. This uses Block Ack evidence "
                    "only and does not prove that an MPDU was transmitted or lost."));
     d_->show_mpdus = new QCheckBox(tr("Show captured MPDUs"), this);
     d_->show_mpdus->setObjectName(QStringLiteral("showMpduSequencesCheckBox"));
-    d_->show_mpdus->setChecked(true);
+    d_->show_mpdus->setChecked(false);
     d_->show_mpdus->setToolTip(
                 tr("Show captured QoS Data MPDU sequence numbers in the reverse data direction "
                    "(BA RA → BA TA) for the selected TID. Each captured A-MPDU subframe is "
                    "plotted separately, including retransmissions."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
-    d_->show_holes->setChecked(true);
+    d_->show_holes->setChecked(false);
     d_->show_holes->setToolTip(tr("Show zero bitmap positions before the highest set position. "
                                   "A zero does not prove that a frame was transmitted or lost."));
     session_layout->addWidget(station_pair_label);
