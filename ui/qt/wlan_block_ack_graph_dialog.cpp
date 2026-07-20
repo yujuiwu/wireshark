@@ -418,11 +418,6 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     session_layout->addWidget(d_->station_pair_combo, 1);
     session_layout->addWidget(tid_label);
     session_layout->addWidget(d_->tid_combo);
-    session_layout->addWidget(d_->show_ssn_labels);
-    session_layout->addWidget(d_->show_time_deltas);
-    session_layout->addWidget(d_->show_ack_gaps);
-    session_layout->addWidget(d_->show_mpdus);
-    session_layout->addWidget(d_->show_holes);
     main_layout->addLayout(session_layout);
 
     d_->plot = new QCustomPlot(this);
@@ -530,6 +525,15 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->status_label = new QLabel(this);
     d_->status_label->setObjectName(QStringLiteral("blockAckStatusLabel"));
     main_layout->addWidget(d_->status_label);
+
+    QHBoxLayout *display_layout = new QHBoxLayout;
+    display_layout->addWidget(d_->show_ssn_labels);
+    display_layout->addWidget(d_->show_time_deltas);
+    display_layout->addWidget(d_->show_ack_gaps);
+    display_layout->addWidget(d_->show_mpdus);
+    display_layout->addWidget(d_->show_holes);
+    display_layout->addStretch(1);
+    main_layout->addLayout(display_layout);
 
     d_->button_box = new QDialogButtonBox(QDialogButtonBox::Save |
                                            QDialogButtonBox::Reset |
