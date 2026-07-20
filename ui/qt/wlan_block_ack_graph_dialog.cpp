@@ -16,6 +16,7 @@
 #include <epan/packet.h>
 #include <epan/proto.h>
 
+#include <QAction>
 #include <QByteArray>
 #include <QCheckBox>
 #include <QComboBox>
@@ -306,9 +307,12 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->plot->axisRect()->setRangeZoom(Qt::Horizontal | Qt::Vertical);
     d_->plot->axisRect()->setRangeDragAxes(d_->plot->xAxis, d_->plot->yAxis);
     d_->plot->axisRect()->setRangeZoomAxes(d_->plot->xAxis, d_->plot->yAxis);
+    d_->plot->setContextMenuPolicy(Qt::ActionsContextMenu);
+    d_->plot->setFocusPolicy(Qt::StrongFocus);
     d_->plot->setToolTip(
                 tr("Drag to pan. Use the wheel over the plot to zoom both axes, or wheel and "
-                   "drag directly over an axis to change only that axis."));
+                   "drag directly over an axis to change only that axis. Shortcuts: "
+                   "X / Shift+X and Y / Shift+Y."));
     d_->plot->xAxis->setLabel(tr("Time"));
     d_->plot->xAxis->setTicker(QSharedPointer<QCPAxisTickerSi>(
                                    new QCPAxisTickerSi(FORMAT_SIZE_UNIT_SECONDS)));
@@ -358,6 +362,23 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->button_box->button(QDialogButtonBox::Reset)->setText(tr("Reset Graph"));
     main_layout->addWidget(d_->button_box);
 
+    QAction *zoom_in_x_action = new QAction(tr("Zoom In X Axis"), d_->plot);
+    zoom_in_x_action->setShortcut(QKeySequence(Qt::Key_X));
+    zoom_in_x_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    d_->plot->addAction(zoom_in_x_action);
+    QAction *zoom_out_x_action = new QAction(tr("Zoom Out X Axis"), d_->plot);
+    zoom_out_x_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_X));
+    zoom_out_x_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    d_->plot->addAction(zoom_out_x_action);
+    QAction *zoom_in_y_action = new QAction(tr("Zoom In Y Axis"), d_->plot);
+    zoom_in_y_action->setShortcut(QKeySequence(Qt::Key_Y));
+    zoom_in_y_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    d_->plot->addAction(zoom_in_y_action);
+    QAction *zoom_out_y_action = new QAction(tr("Zoom Out Y Axis"), d_->plot);
+    zoom_out_y_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Y));
+    zoom_out_y_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    d_->plot->addAction(zoom_out_y_action);
+
     connect(d_->station_pair_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &WlanBlockAckGraphDialog::stationPairChanged);
     connect(d_->tid_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -366,6 +387,14 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
             this, &WlanBlockAckGraphDialog::plotClicked);
+    connect(zoom_in_x_action, &QAction::triggered,
+            this, [this]() { zoomXAxis(true); });
+    connect(zoom_out_x_action, &QAction::triggered,
+            this, [this]() { zoomXAxis(false); });
+    connect(zoom_in_y_action, &QAction::triggered,
+            this, [this]() { zoomYAxis(true); });
+    connect(zoom_out_y_action, &QAction::triggered,
+            this, [this]() { zoomYAxis(false); });
     connect(d_->button_box->button(QDialogButtonBox::Save), &QPushButton::clicked,
             this, &WlanBlockAckGraphDialog::saveGraph);
     connect(d_->button_box->button(QDialogButtonBox::Reset), &QPushButton::clicked,
@@ -844,6 +873,26 @@ void WlanBlockAckGraphDialog::plotClicked(QCPAbstractPlottable *plottable,
             emit goToPacket(static_cast<int>(d_->selected_frame));
         }
     }
+}
+
+void WlanBlockAckGraphDialog::zoomXAxis(bool in)
+{
+    double factor = d_->plot->axisRect()->rangeZoomFactor(Qt::Horizontal);
+    if (!in && factor != 0.0) {
+        factor = 1.0 / factor;
+    }
+    d_->plot->xAxis->scaleRange(factor, d_->plot->xAxis->range().center());
+    d_->plot->replot();
+}
+
+void WlanBlockAckGraphDialog::zoomYAxis(bool in)
+{
+    double factor = d_->plot->axisRect()->rangeZoomFactor(Qt::Vertical);
+    if (!in && factor != 0.0) {
+        factor = 1.0 / factor;
+    }
+    d_->plot->yAxis->scaleRange(factor, d_->plot->yAxis->range().center());
+    d_->plot->replot();
 }
 
 void WlanBlockAckGraphDialog::resetAxes()

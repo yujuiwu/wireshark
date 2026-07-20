@@ -46,6 +46,8 @@ private:
     void drawSession();
     void showSampleDetails(int data_index);
     int anchorIndexForPlottable(QCPAbstractPlottable *plottable, int data_index) const;
+    void zoomXAxis(bool in);
+    void zoomYAxis(bool in);
 
 private slots:
     void stationPairChanged(int pair_index);
