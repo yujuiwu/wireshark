@@ -29,6 +29,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSet>
 #include <QVector>
 #include <QVBoxLayout>
 
@@ -48,16 +49,18 @@ constexpr uint32_t multi_tid_block_ack = 3;
 constexpr int sequence_modulus = 4096;
 constexpr int sequence_half_range = sequence_modulus / 2;
 
+static int wrappedSequence(qint64 sequence)
+{
+    sequence %= sequence_modulus;
+    return static_cast<int>(sequence < 0 ? sequence + sequence_modulus : sequence);
+}
+
 class SequenceNumberAxisTicker : public QCPAxisTickerFixed
 {
 protected:
     QString getTickLabel(double tick, const QLocale &, QChar, int) override
     {
-        qint64 sequence = qRound64(tick) % sequence_modulus;
-        if (sequence < 0) {
-            sequence += sequence_modulus;
-        }
-        return QString::number(sequence);
+        return QString::number(wrappedSequence(qRound64(tick)));
     }
 };
 
@@ -86,6 +89,34 @@ struct MpduSample {
     uint32_t frame_number = 0;
     double relative_time = 0.0;
     uint32_t sequence = 0;
+};
+
+enum class PersistentHoleOutcome {
+    Acknowledged,
+    PassedBySsn,
+    WindowInterrupted,
+    EpochReset,
+    Active
+};
+
+struct PersistentHoleTrack {
+    uint32_t first_frame_number = 0;
+    double first_relative_time = 0.0;
+    int last_zero_anchor_index = -1;
+    uint32_t last_zero_frame_number = 0;
+    double last_zero_relative_time = 0.0;
+    int ba_count = 0;
+};
+
+struct PersistentHoleSpan {
+    int unwrapped_sequence = 0;
+    int endpoint_anchor_index = -1;
+    uint32_t first_frame_number = 0;
+    double first_relative_time = 0.0;
+    double endpoint_relative_time = 0.0;
+    uint32_t terminal_frame_number = 0;
+    int ba_count = 0;
+    PersistentHoleOutcome outcome = PersistentHoleOutcome::Active;
 };
 
 struct BaSession {
@@ -325,6 +356,7 @@ public:
     QVector<int> mpdu_unwrapped_sequences;
     QVector<int> set_anchor_indexes;
     QVector<int> hole_anchor_indexes;
+    QVector<PersistentHoleSpan> persistent_hole_spans;
     QVector<QCPItemText *> ssn_labels;
     QVector<QCPItemText *> time_delta_labels;
 
@@ -334,6 +366,7 @@ public:
     QCheckBox *show_time_deltas = nullptr;
     QCheckBox *show_ack_gaps = nullptr;
     QCheckBox *show_mpdus = nullptr;
+    QCheckBox *show_persistent_holes = nullptr;
     QCheckBox *show_holes = nullptr;
     QCustomPlot *plot = nullptr;
     QLabel *details_label = nullptr;
@@ -344,6 +377,8 @@ public:
     QCPGraph *window_upper_graph = nullptr;
     QCPGraph *set_graph = nullptr;
     QCPGraph *hole_graph = nullptr;
+    QCPGraph *persistent_hole_graph = nullptr;
+    QCPErrorBars *persistent_hole_error_bars = nullptr;
     QCPGraph *advance_span_graph = nullptr;
     QCPGraph *mpdu_graph = nullptr;
 
@@ -409,6 +444,14 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                 tr("Show captured QoS Data MPDU sequence numbers in the reverse data direction "
                    "(BA RA → BA TA) for the selected TID. Each captured A-MPDU subframe is "
                    "plotted separately, including retransmissions."));
+    d_->show_persistent_holes = new QCheckBox(tr("Show persistent-hole aging"), this);
+    d_->show_persistent_holes->setObjectName(
+                QStringLiteral("showPersistentHoleAgingCheckBox"));
+    d_->show_persistent_holes->setChecked(false);
+    d_->show_persistent_holes->setToolTip(
+                tr("Show lifetimes of sequence numbers reported unacknowledged by two or more "
+                   "consecutive Block Ack responses. This uses BA evidence only and does not "
+                   "prove that an MPDU was transmitted or lost."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(false);
@@ -434,8 +477,10 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "drag directly over an axis to change only that axis. Shortcuts: "
                    "X / Shift+X and Y / Shift+Y. When enabled, gray dots mark sequence numbers "
                    "for which no acknowledgment was observed before a later BA SSN advanced "
-                   "past them. Purple diamonds show captured reverse-direction QoS Data MPDUs; "
-                   "they do not affect the Block Ack analysis."));
+                   "past them. Dark-red horizontal spans show persistent BA bitmap holes; click "
+                   "a square endpoint for its lifetime and resolution details. Purple diamonds "
+                   "show captured reverse-direction QoS Data MPDUs; they do not affect the "
+                   "Block Ack analysis."));
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
                        QCustomPlot::limBelow);
     d_->plot->addLayer(QStringLiteral("baTimeDeltaLabels"),
@@ -503,6 +548,29 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                                                      QColor(tango_scarlet_red_3), 7));
     d_->hole_graph->setSelectable(QCP::stNone);
 
+    d_->persistent_hole_graph = d_->plot->addGraph();
+    d_->persistent_hole_graph->setObjectName(
+                QStringLiteral("persistentBaHoleLifetimeGraph"));
+    d_->persistent_hole_graph->setName(tr("Persistent BA hole lifetime"));
+    d_->persistent_hole_graph->setLineStyle(QCPGraph::lsNone);
+    d_->persistent_hole_graph->setPen(QPen(QColor(tango_scarlet_red_4), 1.5));
+    d_->persistent_hole_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssSquare,
+                                QColor(tango_scarlet_red_4), QColor(Qt::white), 7));
+    d_->persistent_hole_graph->setSelectable(QCP::stSingleData);
+    d_->persistent_hole_graph->setLayer(QStringLiteral("overlay"));
+
+    d_->persistent_hole_error_bars = new QCPErrorBars(d_->plot->xAxis, d_->plot->yAxis);
+    d_->persistent_hole_error_bars->setObjectName(
+                QStringLiteral("persistentBaHoleLifetimeSpans"));
+    d_->persistent_hole_error_bars->setErrorType(QCPErrorBars::etKeyError);
+    d_->persistent_hole_error_bars->setPen(QPen(QColor(tango_scarlet_red_4), 1.5));
+    d_->persistent_hole_error_bars->setSymbolGap(0.0);
+    d_->persistent_hole_error_bars->setWhiskerWidth(6.0);
+    d_->persistent_hole_error_bars->setSelectable(QCP::stNone);
+    d_->persistent_hole_error_bars->removeFromLegend();
+    d_->persistent_hole_error_bars->setDataPlottable(d_->persistent_hole_graph);
+
     d_->advance_span_graph = d_->plot->addGraph();
     d_->advance_span_graph->setObjectName(QStringLiteral("baSsnAdvanceSpanGraph"));
     d_->advance_span_graph->setName(tr("No BA ACK before SSN advance"));
@@ -531,6 +599,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     display_layout->addWidget(d_->show_time_deltas);
     display_layout->addWidget(d_->show_ack_gaps);
     display_layout->addWidget(d_->show_mpdus);
+    display_layout->addWidget(d_->show_persistent_holes);
     display_layout->addWidget(d_->show_holes);
     display_layout->addStretch(1);
     main_layout->addLayout(display_layout);
@@ -571,6 +640,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::ackGapsToggled);
     connect(d_->show_mpdus, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::mpdusToggled);
+    connect(d_->show_persistent_holes, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::persistentHolesToggled);
     connect(d_->show_holes, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
@@ -964,6 +1035,9 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
     d_->hole_graph->data()->clear();
+    d_->persistent_hole_graph->data()->clear();
+    d_->persistent_hole_graph->setSelection(QCPDataSelection());
+    d_->persistent_hole_error_bars->data()->clear();
     d_->advance_span_graph->data()->clear();
     d_->anchor_sample_indexes.clear();
     d_->anchor_unwrapped_sequences.clear();
@@ -972,6 +1046,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->mpdu_unwrapped_sequences.clear();
     d_->set_anchor_indexes.clear();
     d_->hole_anchor_indexes.clear();
+    d_->persistent_hole_spans.clear();
     d_->selected_frame = 0;
 
     int session_index = currentSessionIndex();
@@ -980,6 +1055,7 @@ void WlanBlockAckGraphDialog::drawSession()
         d_->show_time_deltas->setEnabled(false);
         d_->show_ack_gaps->setEnabled(false);
         d_->show_mpdus->setEnabled(false);
+        d_->show_persistent_holes->setEnabled(false);
         d_->show_holes->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Save)->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(false);
@@ -1020,6 +1096,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->show_time_deltas->setEnabled(have_responses);
     d_->show_ack_gaps->setEnabled(have_responses);
     d_->show_mpdus->setEnabled(mpdu_count > 0);
+    d_->show_persistent_holes->setEnabled(have_responses);
     d_->show_holes->setEnabled(have_responses);
     d_->button_box->button(QDialogButtonBox::Save)->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(true);
@@ -1037,6 +1114,33 @@ void WlanBlockAckGraphDialog::drawSession()
     QVector<double> hole_sequences;
     QVector<double> advance_span_times;
     QVector<double> advance_span_sequences;
+    // A hole starts only as a zero below a later set bit. Once active, every
+    // subsequent BA which covers it and still reports zero contributes to its
+    // age, even when the zero is beyond that BA's highest set position.
+    QHash<int, PersistentHoleTrack> active_holes;
+    // Prevent a stale, backward BA from recreating a sequence which this epoch
+    // already acknowledged or advanced past.
+    QSet<int> acknowledged_sequences;
+    int greatest_ssn = 0;
+    bool have_greatest_ssn = false;
+    auto finish_persistent_hole = [this](
+            int sequence, const PersistentHoleTrack &track,
+            PersistentHoleOutcome outcome, int endpoint_anchor_index,
+            double endpoint_relative_time, uint32_t terminal_frame_number) {
+        if (track.ba_count < 2 || endpoint_anchor_index < 0) {
+            return;
+        }
+        PersistentHoleSpan span;
+        span.unwrapped_sequence = sequence;
+        span.endpoint_anchor_index = endpoint_anchor_index;
+        span.first_frame_number = track.first_frame_number;
+        span.first_relative_time = track.first_relative_time;
+        span.endpoint_relative_time = endpoint_relative_time;
+        span.terminal_frame_number = terminal_frame_number;
+        span.ba_count = track.ba_count;
+        span.outcome = outcome;
+        d_->persistent_hole_spans.append(span);
+    };
     // Exclusive frontier: the first trailing sequence without an observed BA ACK.
     int next_sequence_after_highest_ack = 0;
     bool have_ack_frontier = false;
@@ -1078,8 +1182,20 @@ void WlanBlockAckGraphDialog::drawSession()
         // A backward window wholly below the ACK frontier cannot extend the
         // current epoch, so start a new frontier. Modulo wrap has already been
         // unwrapped forward and does not satisfy this condition.
-        if (have_ack_frontier && ba_ssn_moved_backward &&
-            unwrapped + positions <= next_sequence_after_highest_ack) {
+        bool epoch_reset = have_ack_frontier && ba_ssn_moved_backward &&
+                unwrapped + positions <= next_sequence_after_highest_ack;
+        if (epoch_reset) {
+            const QList<int> active_sequences = active_holes.keys();
+            for (int sequence : active_sequences) {
+                const PersistentHoleTrack track = active_holes.value(sequence);
+                finish_persistent_hole(
+                            sequence, track, PersistentHoleOutcome::EpochReset,
+                            track.last_zero_anchor_index,
+                            track.last_zero_relative_time, sample.frame_number);
+            }
+            active_holes.clear();
+            acknowledged_sequences.clear();
+            have_greatest_ssn = false;
             next_sequence_after_highest_ack = 0;
             have_ack_frontier = false;
         }
@@ -1123,6 +1239,58 @@ void WlanBlockAckGraphDialog::drawSession()
             }
         }
 
+        if (!have_greatest_ssn || unwrapped > greatest_ssn) {
+            greatest_ssn = unwrapped;
+            have_greatest_ssn = true;
+            QList<int> old_acknowledgments;
+            for (int sequence : acknowledged_sequences) {
+                if (sequence < greatest_ssn) {
+                    old_acknowledgments.append(sequence);
+                }
+            }
+            for (int sequence : old_acknowledgments) {
+                acknowledged_sequences.remove(sequence);
+            }
+        }
+
+        const QList<int> active_sequences = active_holes.keys();
+        for (int sequence : active_sequences) {
+            const PersistentHoleTrack track = active_holes.value(sequence);
+            if (sequence < unwrapped) {
+                finish_persistent_hole(
+                            sequence, track, PersistentHoleOutcome::PassedBySsn,
+                            anchor_index, sample.relative_time,
+                            sample.frame_number);
+                active_holes.remove(sequence);
+                continue;
+            }
+            if (sequence >= unwrapped + positions) {
+                finish_persistent_hole(
+                            sequence, track, PersistentHoleOutcome::WindowInterrupted,
+                            track.last_zero_anchor_index,
+                            track.last_zero_relative_time, sample.frame_number);
+                active_holes.remove(sequence);
+                continue;
+            }
+
+            int position = sequence - unwrapped;
+            if (bitmapPositionSet(sample, position)) {
+                finish_persistent_hole(
+                            sequence, track, PersistentHoleOutcome::Acknowledged,
+                            anchor_index, sample.relative_time,
+                            sample.frame_number);
+                acknowledged_sequences.insert(sequence);
+                active_holes.remove(sequence);
+                continue;
+            }
+
+            PersistentHoleTrack &updated_track = active_holes[sequence];
+            updated_track.last_zero_anchor_index = anchor_index;
+            updated_track.last_zero_frame_number = sample.frame_number;
+            updated_track.last_zero_relative_time = sample.relative_time;
+            updated_track.ba_count++;
+        }
+
         int sample_next_sequence_after_highest_ack = highest_set >= 0
                 ? unwrapped + highest_set + 1 : unwrapped;
         if (have_ack_frontier) {
@@ -1135,17 +1303,52 @@ void WlanBlockAckGraphDialog::drawSession()
         }
 
         for (int position = 0; position <= highest_set; position++) {
+            int sequence = unwrapped + position;
             if (bitmapPositionSet(sample, position)) {
                 set_times.append(sample.relative_time);
-                set_sequences.append(unwrapped + position);
+                set_sequences.append(sequence);
                 d_->set_anchor_indexes.append(anchor_index);
+                if (sequence >= greatest_ssn) {
+                    acknowledged_sequences.insert(sequence);
+                }
             } else {
                 hole_times.append(sample.relative_time);
-                hole_sequences.append(unwrapped + position);
+                hole_sequences.append(sequence);
                 d_->hole_anchor_indexes.append(anchor_index);
+                if (sequence >= greatest_ssn &&
+                    !acknowledged_sequences.contains(sequence) &&
+                    !active_holes.contains(sequence)) {
+                    PersistentHoleTrack track;
+                    track.first_frame_number = sample.frame_number;
+                    track.first_relative_time = sample.relative_time;
+                    track.last_zero_anchor_index = anchor_index;
+                    track.last_zero_frame_number = sample.frame_number;
+                    track.last_zero_relative_time = sample.relative_time;
+                    track.ba_count = 1;
+                    active_holes.insert(sequence, track);
+                }
             }
         }
     }
+
+    const QList<int> active_sequences = active_holes.keys();
+    for (int sequence : active_sequences) {
+        const PersistentHoleTrack track = active_holes.value(sequence);
+        finish_persistent_hole(
+                    sequence, track, PersistentHoleOutcome::Active,
+                    track.last_zero_anchor_index,
+                    track.last_zero_relative_time, track.last_zero_frame_number);
+    }
+    std::sort(d_->persistent_hole_spans.begin(), d_->persistent_hole_spans.end(),
+              [](const PersistentHoleSpan &left, const PersistentHoleSpan &right) {
+        if (left.endpoint_relative_time != right.endpoint_relative_time) {
+            return left.endpoint_relative_time < right.endpoint_relative_time;
+        }
+        if (left.unwrapped_sequence != right.unwrapped_sequence) {
+            return left.unwrapped_sequence < right.unwrapped_sequence;
+        }
+        return left.first_relative_time < right.first_relative_time;
+    });
 
     if (mpdus) {
         int latest_anchor = -1;
@@ -1189,15 +1392,40 @@ void WlanBlockAckGraphDialog::drawSession()
         }
     }
 
+    QVector<double> persistent_hole_end_times;
+    QVector<double> persistent_hole_sequences;
+    QVector<double> persistent_hole_durations;
+    QVector<double> persistent_hole_error_plus;
+    persistent_hole_end_times.reserve(d_->persistent_hole_spans.size());
+    persistent_hole_sequences.reserve(d_->persistent_hole_spans.size());
+    persistent_hole_durations.reserve(d_->persistent_hole_spans.size());
+    persistent_hole_error_plus.reserve(d_->persistent_hole_spans.size());
+    for (const PersistentHoleSpan &span : d_->persistent_hole_spans) {
+        persistent_hole_end_times.append(span.endpoint_relative_time);
+        persistent_hole_sequences.append(span.unwrapped_sequence);
+        persistent_hole_durations.append(
+                    span.endpoint_relative_time - span.first_relative_time);
+        persistent_hole_error_plus.append(0.0);
+    }
+
     d_->anchor_graph->setData(anchor_times, anchor_sequences, true);
     d_->request_graph->setData(request_times, request_sequences, true);
     d_->mpdu_graph->setData(mpdu_times, mpdu_sequences, true);
     d_->window_upper_graph->setData(window_upper_times, window_upper_sequences, true);
     d_->set_graph->setData(set_times, set_sequences, true);
     d_->hole_graph->setData(hole_times, hole_sequences, true);
+    d_->persistent_hole_graph->setData(
+                persistent_hole_end_times, persistent_hole_sequences, true);
+    d_->persistent_hole_error_bars->setData(
+                persistent_hole_durations, persistent_hole_error_plus);
     d_->advance_span_graph->setData(advance_span_times, advance_span_sequences, true);
     d_->advance_span_graph->setVisible(d_->show_ack_gaps->isChecked());
     d_->mpdu_graph->setVisible(d_->show_mpdus->isChecked());
+    bool show_persistent_holes = d_->show_persistent_holes->isChecked() &&
+            !d_->persistent_hole_spans.isEmpty();
+    d_->show_persistent_holes->setEnabled(!d_->persistent_hole_spans.isEmpty());
+    d_->persistent_hole_graph->setVisible(show_persistent_holes);
+    d_->persistent_hole_error_bars->setVisible(show_persistent_holes);
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
     if (d_->show_time_deltas->isChecked()) {
         drawTimeDeltaLabels();
@@ -1206,14 +1434,16 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->status_label->setText(
                 tr("%1 session(s) · %2 BA / %3 BAR in this session · "
                    "%4 captured QoS Data MPDU(s) · %5 bitmap-set position(s) · "
-                   "%6 bitmap hole(s) · %7 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "%8/%9 unsupported BA/BAR · %10/%11 malformed BA/BAR")
+                   "%6 bitmap hole(s) · %7 persistent-hole lifetime(s) · "
+                   "%8 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "%9/%10 unsupported BA/BAR · %11/%12 malformed BA/BAR")
                 .arg(d_->sessions.size())
                 .arg(response_count)
                 .arg(request_count)
                 .arg(mpdu_count)
                 .arg(set_times.size())
                 .arg(hole_times.size())
+                .arg(d_->persistent_hole_spans.size())
                 .arg(advance_span_times.size())
                 .arg(d_->unsupported_ba_frames)
                 .arg(d_->unsupported_bar_frames)
@@ -1357,6 +1587,7 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
 
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->anchor_graph->setSelection(
                 QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
@@ -1391,6 +1622,7 @@ void WlanBlockAckGraphDialog::showRequestDetails(int data_index)
 
     d_->anchor_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(
                 QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
@@ -1425,7 +1657,75 @@ void WlanBlockAckGraphDialog::showMpduDetails(int data_index)
 
     d_->anchor_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(QCPDataSelection());
+    d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(
+                QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
+    d_->plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void WlanBlockAckGraphDialog::showPersistentHoleDetails(int data_index)
+{
+    int session_index = currentSessionIndex();
+    if (session_index < 0 || session_index >= d_->sessions.size() ||
+        data_index < 0 || data_index >= d_->persistent_hole_spans.size()) {
+        return;
+    }
+
+    const PersistentHoleSpan &span = d_->persistent_hole_spans.at(data_index);
+    if (span.endpoint_anchor_index < 0 ||
+        span.endpoint_anchor_index >= d_->anchor_sample_indexes.size()) {
+        return;
+    }
+
+    const BaSession &session = d_->sessions.at(session_index);
+    int sample_index = d_->anchor_sample_indexes.at(span.endpoint_anchor_index);
+    const BaSample &sample = session.samples.at(sample_index);
+    d_->selected_frame = sample.frame_number;
+
+    QString outcome;
+    switch (span.outcome) {
+    case PersistentHoleOutcome::Acknowledged:
+        outcome = tr("acknowledged by this BA");
+        break;
+    case PersistentHoleOutcome::PassedBySsn:
+        outcome = tr("passed by this BA SSN without an observed acknowledgment");
+        break;
+    case PersistentHoleOutcome::WindowInterrupted:
+        outcome = tr("last covered here; BA frame %1 no longer covered this sequence")
+                .arg(span.terminal_frame_number);
+        break;
+    case PersistentHoleOutcome::EpochReset:
+        outcome = tr("last covered here; BA frame %1 began a new analysis epoch")
+                .arg(span.terminal_frame_number);
+        break;
+    case PersistentHoleOutcome::Active:
+        outcome = tr("still unacknowledged in the last covering BA");
+        break;
+    }
+
+    QString elapsed = gchar_free_to_qstring(
+                format_units(nullptr,
+                             span.endpoint_relative_time - span.first_relative_time,
+                             FORMAT_SIZE_UNIT_SECONDS, FORMAT_SIZE_PREFIX_SI, 3));
+    d_->details_label->setText(
+                tr("Frame %1 · Persistent BA bitmap hole · TA %2 → RA %3 · TID %4 · "
+                   "sequence %5 (unwrapped %6) · %7 consecutive covering BA responses "
+                   "without an ACK · lifetime span %8 · first observed in frame %9 · %10. "
+                   "Click a lifetime endpoint to go to this frame.")
+                .arg(sample.frame_number)
+                .arg(session.ta, session.ra)
+                .arg(session.tid)
+                .arg(wrappedSequence(span.unwrapped_sequence))
+                .arg(span.unwrapped_sequence)
+                .arg(span.ba_count)
+                .arg(elapsed)
+                .arg(span.first_frame_number)
+                .arg(outcome));
+
+    d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->request_graph->setSelection(QCPDataSelection());
+    d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->persistent_hole_graph->setSelection(
                 QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
 }
@@ -1497,6 +1797,13 @@ void WlanBlockAckGraphDialog::mpdusToggled(bool checked)
     d_->plot->replot();
 }
 
+void WlanBlockAckGraphDialog::persistentHolesToggled(bool checked)
+{
+    d_->persistent_hole_graph->setVisible(checked);
+    d_->persistent_hole_error_bars->setVisible(checked);
+    d_->plot->replot();
+}
+
 void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
 {
     d_->hole_graph->setVisible(checked);
@@ -1511,7 +1818,11 @@ void WlanBlockAckGraphDialog::plotClicked(QCPAbstractPlottable *plottable,
     }
 
     bool sample_selected = false;
-    if (plottable == d_->mpdu_graph &&
+    if (plottable == d_->persistent_hole_graph &&
+        data_index >= 0 && data_index < d_->persistent_hole_spans.size()) {
+        showPersistentHoleDetails(data_index);
+        sample_selected = true;
+    } else if (plottable == d_->mpdu_graph &&
         data_index >= 0 && data_index < d_->mpdu_unwrapped_sequences.size()) {
         showMpduDetails(data_index);
         sample_selected = true;
@@ -1599,6 +1910,7 @@ void WlanBlockAckGraphDialog::resetAxes()
     const QVector<QCPGraph *> value_graphs = {
         d_->anchor_graph, d_->request_graph, d_->window_upper_graph, d_->set_graph,
         d_->show_holes->isChecked() ? d_->hole_graph : nullptr,
+        d_->show_persistent_holes->isChecked() ? d_->persistent_hole_graph : nullptr,
         d_->show_ack_gaps->isChecked() ? d_->advance_span_graph : nullptr,
         mpdus_visible ? d_->mpdu_graph : nullptr
     };
