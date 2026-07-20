@@ -246,6 +246,7 @@ public:
     QVector<int> anchor_sample_indexes;
     QVector<int> set_anchor_indexes;
     QVector<int> hole_anchor_indexes;
+    QVector<QCPItemText *> ssn_labels;
 
     QComboBox *station_pair_combo = nullptr;
     QComboBox *tid_combo = nullptr;
@@ -255,6 +256,7 @@ public:
     QLabel *status_label = nullptr;
     QDialogButtonBox *button_box = nullptr;
     QCPGraph *anchor_graph = nullptr;
+    QCPGraph *window_upper_graph = nullptr;
     QCPGraph *set_graph = nullptr;
     QCPGraph *hole_graph = nullptr;
 
@@ -313,6 +315,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                 tr("Drag to pan. Use the wheel over the plot to zoom both axes, or wheel and "
                    "drag directly over an axis to change only that axis. Shortcuts: "
                    "X / Shift+X and Y / Shift+Y."));
+    d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
+                       QCustomPlot::limBelow);
     d_->plot->xAxis->setLabel(tr("Time"));
     d_->plot->xAxis->setTicker(QSharedPointer<QCPAxisTickerSi>(
                                    new QCPAxisTickerSi(FORMAT_SIZE_UNIT_SECONDS)));
@@ -329,6 +333,15 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                                                        QColor(tango_sky_blue_5),
                                                        QColor(Qt::white), 7));
     d_->anchor_graph->setSelectable(QCP::stSingleData);
+
+    d_->window_upper_graph = d_->plot->addGraph();
+    d_->window_upper_graph->setObjectName(QStringLiteral("baWindowUpperBoundGraph"));
+    d_->window_upper_graph->setName(tr("BA window upper bound (exclusive)"));
+    d_->window_upper_graph->setLineStyle(QCPGraph::lsStepLeft);
+    d_->window_upper_graph->setPen(QPen(QColor(tango_orange_4), 1.5));
+    d_->window_upper_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDisc, QColor(tango_orange_4), 5));
+    d_->window_upper_graph->setSelectable(QCP::stNone);
 
     d_->set_graph = d_->plot->addGraph();
     d_->set_graph->setName(tr("BA bitmap set"));
@@ -676,8 +689,13 @@ void WlanBlockAckGraphDialog::drawSession()
 {
     uint32_t preferred_frame = d_->selected_frame > 0
             ? d_->selected_frame : d_->initially_selected_frame;
+    for (QCPItemText *label : d_->ssn_labels) {
+        d_->plot->removeItem(label);
+    }
+    d_->ssn_labels.clear();
     d_->anchor_graph->data()->clear();
     d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
     d_->hole_graph->data()->clear();
     d_->anchor_sample_indexes.clear();
@@ -711,6 +729,8 @@ void WlanBlockAckGraphDialog::drawSession()
     const BaSession &session = d_->sessions.at(session_index);
     QVector<double> anchor_times;
     QVector<double> anchor_sequences;
+    QVector<double> window_upper_times;
+    QVector<double> window_upper_sequences;
     QVector<double> set_times;
     QVector<double> set_sequences;
     QVector<double> hole_times;
@@ -723,6 +743,30 @@ void WlanBlockAckGraphDialog::drawSession()
         int anchor_index = static_cast<int>(d_->anchor_sample_indexes.size()) - 1;
 
         int positions = bitmapPositionCount(sample);
+        window_upper_times.append(sample.relative_time);
+        window_upper_sequences.append(sample.starting_sequence + positions);
+
+        QCPItemText *ssn_label = new QCPItemText(d_->plot);
+        ssn_label->setObjectName(
+                    QStringLiteral("baSsnLabel_%1").arg(sample.frame_number));
+        ssn_label->position->setAxes(d_->plot->xAxis, d_->plot->yAxis);
+        ssn_label->position->setCoords(sample.relative_time, sample.starting_sequence);
+        ssn_label->setText(QString::number(sample.starting_sequence));
+        ssn_label->setPositionAlignment(Qt::AlignHCenter | Qt::AlignTop);
+        ssn_label->setTextAlignment(Qt::AlignHCenter);
+        ssn_label->setPadding(QMargins(0, 5, 0, 0));
+        QFont label_font = d_->plot->font();
+        label_font.setPointSize(8);
+        ssn_label->setFont(label_font);
+        ssn_label->setColor(QColor(tango_sky_blue_5));
+        ssn_label->setPen(Qt::NoPen);
+        ssn_label->setBrush(Qt::NoBrush);
+        ssn_label->setSelectable(false);
+        ssn_label->setClipAxisRect(d_->plot->axisRect());
+        ssn_label->setClipToAxisRect(true);
+        ssn_label->setLayer(QStringLiteral("baSsnLabels"));
+        d_->ssn_labels.append(ssn_label);
+
         int highest_set = -1;
         for (int position = positions - 1; position >= 0; position--) {
             if (bitmapPositionSet(sample, position)) {
@@ -745,6 +789,7 @@ void WlanBlockAckGraphDialog::drawSession()
     }
 
     d_->anchor_graph->setData(anchor_times, anchor_sequences, true);
+    d_->window_upper_graph->setData(window_upper_times, window_upper_sequences, true);
     d_->set_graph->setData(set_times, set_sequences, true);
     d_->hole_graph->setData(hole_times, hole_sequences, true);
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
@@ -786,6 +831,7 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
     d_->selected_frame = sample.frame_number;
 
     int window_positions = bitmapPositionCount(sample);
+    int upper_bound = static_cast<int>(sample.starting_sequence) + window_positions;
     int set_positions = 0;
     for (int position = 0; position < window_positions; position++) {
         set_positions += bitmapPositionSet(sample, position) ? 1 : 0;
@@ -806,13 +852,15 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
 
     d_->details_label->setText(
                 tr("Frame %1 · %2 BA · TA %3 → RA %4 · TID %5 · SSN %6 · "
-                   "%7. Click a BA point to go to this frame.")
+                   "window upper bound %7 (exclusive) · %8. "
+                   "Click a BA point to go to this frame.")
                 .arg(sample.frame_number)
                 .arg(blockAckTypeName(sample.type))
                 .arg(d_->sessions.at(session_index).ta,
                      d_->sessions.at(session_index).ra)
                 .arg(sample.tid)
                 .arg(sample.starting_sequence)
+                .arg(upper_bound)
                 .arg(bitmap_detail));
 
     d_->anchor_graph->setSelection(
@@ -827,6 +875,9 @@ int WlanBlockAckGraphDialog::anchorIndexForPlottable(
         return -1;
     }
     if (plottable == d_->anchor_graph) {
+        return data_index < d_->anchor_sample_indexes.size() ? data_index : -1;
+    }
+    if (plottable == d_->window_upper_graph) {
         return data_index < d_->anchor_sample_indexes.size() ? data_index : -1;
     }
     if (plottable == d_->set_graph && data_index < d_->set_anchor_indexes.size()) {
@@ -919,7 +970,7 @@ void WlanBlockAckGraphDialog::resetAxes()
     bool have_y_range = false;
     QCPRange y_range;
     const QVector<QCPGraph *> value_graphs = {
-        d_->anchor_graph, d_->set_graph,
+        d_->anchor_graph, d_->window_upper_graph, d_->set_graph,
         d_->show_holes->isChecked() ? d_->hole_graph : nullptr
     };
     for (QCPGraph *graph : value_graphs) {
