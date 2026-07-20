@@ -47,6 +47,7 @@ private:
     void clearTimeDeltaLabels();
     void drawTimeDeltaLabels();
     void showSampleDetails(int data_index);
+    void showRequestDetails(int data_index);
     int anchorIndexForPlottable(QCPAbstractPlottable *plottable, int data_index) const;
     void zoomXAxis(bool in);
     void zoomYAxis(bool in);

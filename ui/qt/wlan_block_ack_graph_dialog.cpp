@@ -75,6 +75,7 @@ using FieldInfos = QVector<const field_info *>;
 struct BaSample {
     uint32_t frame_number = 0;
     double relative_time = 0.0;
+    bool is_request = false;
     uint32_t type = 0;
     uint32_t tid = 0;
     uint32_t starting_sequence = 0;
@@ -260,6 +261,7 @@ class WlanBlockAckGraphDialog::Private
 {
 public:
     Private() :
+        hf_type_subtype(fieldIdsByName("wlan.fc.type_subtype")),
         hf_ba_type(fieldIdsByName("wlan.ba.control.ba_type")),
         hf_single_tid(fieldIdsByName("wlan.ba.basic.tidinfo")),
         hf_multi_tid(fieldIdsByName("wlan.bar.mtid.tidinfo.value")),
@@ -268,6 +270,7 @@ public:
     {
     }
 
+    FieldIds hf_type_subtype;
     FieldIds hf_ba_type;
     FieldIds hf_single_tid;
     FieldIds hf_multi_tid;
@@ -279,6 +282,8 @@ public:
     QHash<QString, int> session_indexes;
     QVector<int> anchor_sample_indexes;
     QVector<int> anchor_unwrapped_sequences;
+    QVector<int> request_sample_indexes;
+    QVector<int> request_unwrapped_sequences;
     QVector<int> set_anchor_indexes;
     QVector<int> hole_anchor_indexes;
     QVector<QCPItemText *> ssn_labels;
@@ -294,6 +299,7 @@ public:
     QLabel *status_label = nullptr;
     QDialogButtonBox *button_box = nullptr;
     QCPGraph *anchor_graph = nullptr;
+    QCPGraph *request_graph = nullptr;
     QCPGraph *window_upper_graph = nullptr;
     QCPGraph *set_graph = nullptr;
     QCPGraph *hole_graph = nullptr;
@@ -301,8 +307,11 @@ public:
     uint32_t initially_selected_frame = 0;
     uint32_t selected_frame = 0;
     int total_ba_frames = 0;
+    int total_bar_frames = 0;
     int unsupported_ba_frames = 0;
+    int unsupported_bar_frames = 0;
     int malformed_ba_frames = 0;
+    int malformed_bar_frames = 0;
 };
 
 WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &cf) :
@@ -318,10 +327,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
 
     QVBoxLayout *main_layout = new QVBoxLayout(this);
     QHBoxLayout *session_layout = new QHBoxLayout;
-    QLabel *station_pair_label = new QLabel(tr("STA pair (TA → RA):"), this);
+    QLabel *station_pair_label = new QLabel(tr("BA pair (TA → RA):"), this);
     d_->station_pair_combo = new QComboBox(this);
     d_->station_pair_combo->setObjectName(QStringLiteral("stationPairComboBox"));
     d_->station_pair_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    d_->station_pair_combo->setToolTip(
+                tr("The pair direction follows Block Ack responses. Matching Block Ack "
+                   "Requests travel in the reverse direction."));
     station_pair_label->setBuddy(d_->station_pair_combo);
     QLabel *tid_label = new QLabel(tr("TID:"), this);
     d_->tid_combo = new QComboBox(this);
@@ -392,6 +404,16 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                                                        QColor(Qt::white), 7));
     d_->anchor_graph->setSelectable(QCP::stSingleData);
 
+    d_->request_graph = d_->plot->addGraph();
+    d_->request_graph->setObjectName(QStringLiteral("barStartingSequenceGraph"));
+    d_->request_graph->setName(tr("BAR starting sequence"));
+    d_->request_graph->setLineStyle(QCPGraph::lsNone);
+    d_->request_graph->setPen(QPen(QColor(tango_plum_4), 1.5));
+    d_->request_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssTriangle, QColor(tango_plum_5),
+                                QColor(Qt::white), 8));
+    d_->request_graph->setSelectable(QCP::stSingleData);
+
     d_->window_upper_graph = d_->plot->addGraph();
     d_->window_upper_graph->setObjectName(QStringLiteral("baWindowUpperBoundGraph"));
     d_->window_upper_graph->setName(tr("BA window upper bound (exclusive)"));
@@ -416,8 +438,9 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->hole_graph->setSelectable(QCP::stNone);
 
     d_->details_label = new QLabel(
-                tr("Only Block Ack responses are analyzed. Bitmap zeros mean “not acknowledged "
-                   "in this BA”; they do not prove transmission or packet loss."), this);
+                tr("Only Block Ack responses and requests are analyzed; data frames are not. "
+                   "Bitmap zeros mean “not acknowledged in this BA”; they do not prove "
+                   "transmission or packet loss."), this);
     d_->details_label->setObjectName(QStringLiteral("blockAckDetailsLabel"));
     d_->details_label->setWordWrap(true);
     main_layout->addWidget(d_->details_label);
@@ -496,8 +519,11 @@ void WlanBlockAckGraphDialog::tapReset(void *dialog_ptr)
     dialog->d_->sta_pairs.clear();
     dialog->d_->session_indexes.clear();
     dialog->d_->total_ba_frames = 0;
+    dialog->d_->total_bar_frames = 0;
     dialog->d_->unsupported_ba_frames = 0;
+    dialog->d_->unsupported_bar_frames = 0;
     dialog->d_->malformed_ba_frames = 0;
+    dialog->d_->malformed_bar_frames = 0;
 }
 
 tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
@@ -511,19 +537,30 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
     }
 
     Private *d = dialog->d_;
-    d->total_ba_frames++;
+    QVector<uint32_t> subtypes = unsignedFieldValues(edt, d->hf_type_subtype);
+    bool is_request = subtypes.contains(0x0018);
+    bool is_response = subtypes.contains(0x0019);
+    if (is_request == is_response) {
+        return TAP_PACKET_DONT_REDRAW;
+    }
+
+    int &total_frames = is_request ? d->total_bar_frames : d->total_ba_frames;
+    int &unsupported_frames = is_request
+            ? d->unsupported_bar_frames : d->unsupported_ba_frames;
+    int &malformed_frames = is_request
+            ? d->malformed_bar_frames : d->malformed_ba_frames;
+    total_frames++;
 
     if (!pinfo->dl_src.data || pinfo->dl_src.len != 6 ||
         !pinfo->dl_dst.data || pinfo->dl_dst.len != 6) {
-        d->malformed_ba_frames++;
+        malformed_frames++;
         return TAP_PACKET_DONT_REDRAW;
     }
 
     QVector<uint32_t> types = unsignedFieldValues(edt, d->hf_ba_type);
     QVector<uint32_t> starting_sequences = unsignedFieldValues(edt, d->hf_starting_sequence);
-    QVector<QByteArray> bitmaps = byteFieldValues(edt, d->hf_bitmap);
     if (types.isEmpty()) {
-        d->malformed_ba_frames++;
+        malformed_frames++;
         return TAP_PACKET_DONT_REDRAW;
     }
 
@@ -533,7 +570,7 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
         // GCR adds a group address to its session identity, and Multi-STA
         // normally supplies only an AID for each entry. Including either in a
         // TA/RA/TID-only graph would merge distinct peers or groups.
-        d->unsupported_ba_frames++;
+        unsupported_frames++;
         return TAP_PACKET_DONT_REDRAW;
     }
 
@@ -544,9 +581,13 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
         tids.resize(1);
     }
 
-    if (tids.isEmpty() || starting_sequences.isEmpty() || bitmaps.isEmpty() ||
-        tids.size() != starting_sequences.size() || tids.size() != bitmaps.size()) {
-        d->malformed_ba_frames++;
+    QVector<QByteArray> bitmaps;
+    if (!is_request) {
+        bitmaps = byteFieldValues(edt, d->hf_bitmap);
+    }
+    if (tids.isEmpty() || tids.size() != starting_sequences.size() ||
+        (!is_request && tids.size() != bitmaps.size())) {
+        malformed_frames++;
         return TAP_PACKET_DONT_REDRAW;
     }
 
@@ -556,24 +597,32 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
         BaSample sample;
         sample.frame_number = pinfo->num;
         sample.relative_time = nstime_to_sec(&pinfo->rel_ts);
+        sample.is_request = is_request;
         sample.type = type;
         sample.tid = tids.at(i);
         sample.starting_sequence = starting_sequences.at(i) & 0x0fff;
-        sample.bitmap = bitmaps.at(i);
 
-        // Basic BA contains 64 16-bit fragment bitmaps. Other supported BA
-        // formats contain one bit per sequence number.
-        if (!validBitmapSize(type, static_cast<int>(sample.bitmap.size()))) {
-            d->malformed_ba_frames++;
-            continue;
+        if (!is_request) {
+            sample.bitmap = bitmaps.at(i);
+            // Basic BA contains 64 16-bit fragment bitmaps. Other supported
+            // BA formats contain one bit per sequence number.
+            if (!validBitmapSize(type, static_cast<int>(sample.bitmap.size()))) {
+                malformed_frames++;
+                continue;
+            }
         }
 
-        QString key = sessionKey(ta, ra, sample.tid);
+        // A BAR travels from the data originator to the BA recipient. Store it
+        // in the reverse, BA-response direction so the request and response
+        // appear in the same TA/RA/TID session.
+        QString session_ta = is_request ? ra : ta;
+        QString session_ra = is_request ? ta : ra;
+        QString key = sessionKey(session_ta, session_ra, sample.tid);
         int session_index = d->session_indexes.value(key, -1);
         if (session_index < 0) {
             BaSession session;
-            session.ta = ta;
-            session.ra = ra;
+            session.ta = session_ta;
+            session.ra = session_ra;
             session.tid = sample.tid;
             session_index = static_cast<int>(d->sessions.size());
             d->sessions.append(session);
@@ -596,10 +645,11 @@ void WlanBlockAckGraphDialog::tapDraw(void *dialog_ptr)
 void WlanBlockAckGraphDialog::collectBlockAcks()
 {
     // Every field in the second clause is included to prime it in the protocol
-    // tree. The subtype predicate is what admits packets: 0x19 is Block Ack,
-    // while 0x18 (Block Ack Request) and all data frames are excluded.
+    // tree. The subtype predicate admits only Block Ack Requests (0x18) and
+    // Block Ack responses (0x19); data frames remain excluded.
     static const char tap_filter[] =
-            "wlan.fc.type_subtype == 0x0019 && "
+            "(wlan.fc.type_subtype == 0x0018 || "
+            "wlan.fc.type_subtype == 0x0019) && "
             "(wlan.ta || wlan.ra || wlan.ba.control.ba_type || "
             "wlan.ba.basic.tidinfo || wlan.bar.mtid.tidinfo.value || "
             "wlan.fixed.ssc.sequence || wlan.ba.bm)";
@@ -718,10 +768,16 @@ void WlanBlockAckGraphDialog::populateTids(int preferred_session, int preferred_
     int selected_tid_index = -1;
     for (int session_index : pair.session_indexes) {
         const BaSession &session = d_->sessions.at(session_index);
+        int response_count = 0;
+        for (const BaSample &sample : session.samples) {
+            response_count += sample.is_request ? 0 : 1;
+        }
+        int request_count = static_cast<int>(session.samples.size()) - response_count;
         d_->tid_combo->addItem(
-                    tr("TID %1 · %n BA(s)", "",
-                       static_cast<int>(session.samples.size()))
-                    .arg(session.tid), session_index);
+                    tr("TID %1 · %2 BA(s) · %3 BAR(s)")
+                    .arg(session.tid)
+                    .arg(response_count)
+                    .arg(request_count), session_index);
         if (session_index == preferred_session ||
             (selected_tid_index < 0 && preferred_tid >= 0 &&
              session.tid == static_cast<uint32_t>(preferred_tid))) {
@@ -762,11 +818,15 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->ssn_labels.clear();
     d_->anchor_graph->data()->clear();
     d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->request_graph->data()->clear();
+    d_->request_graph->setSelection(QCPDataSelection());
     d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
     d_->hole_graph->data()->clear();
     d_->anchor_sample_indexes.clear();
     d_->anchor_unwrapped_sequences.clear();
+    d_->request_sample_indexes.clear();
+    d_->request_unwrapped_sequences.clear();
     d_->set_anchor_indexes.clear();
     d_->hole_anchor_indexes.clear();
     d_->selected_frame = 0;
@@ -779,28 +839,40 @@ void WlanBlockAckGraphDialog::drawSession()
         d_->button_box->button(QDialogButtonBox::Save)->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(false);
         d_->details_label->setText(
-                    tr("Only Block Ack responses are analyzed. Bitmap zeros mean “not "
-                       "acknowledged in this BA”; they do not prove transmission or packet loss."));
+                    tr("Only Block Ack responses and requests are analyzed; data frames are not. "
+                       "Bitmap zeros mean “not acknowledged in this BA”; they do not prove "
+                       "transmission or packet loss."));
         d_->status_label->setText(
-                    tr("No supported Block Ack sessions found · %1 BA frame(s) examined · "
-                       "%2 unsupported · %3 malformed")
+                    tr("No supported Block Ack sessions found · %1 BA / %2 BAR examined · "
+                       "%3/%4 unsupported BA/BAR · %5/%6 malformed BA/BAR")
                     .arg(d_->total_ba_frames)
+                    .arg(d_->total_bar_frames)
                     .arg(d_->unsupported_ba_frames)
-                    .arg(d_->malformed_ba_frames));
+                    .arg(d_->unsupported_bar_frames)
+                    .arg(d_->malformed_ba_frames)
+                    .arg(d_->malformed_bar_frames));
         d_->plot->xAxis->setRange(0.0, 1.0);
         d_->plot->yAxis->setRange(0.0, 1.0);
         d_->plot->replot();
         return;
     }
 
-    d_->show_ssn_labels->setEnabled(true);
-    d_->show_time_deltas->setEnabled(true);
-    d_->show_holes->setEnabled(true);
+    const BaSession &session = d_->sessions.at(session_index);
+    int response_count = 0;
+    for (const BaSample &sample : session.samples) {
+        response_count += sample.is_request ? 0 : 1;
+    }
+    int request_count = static_cast<int>(session.samples.size()) - response_count;
+    bool have_responses = response_count > 0;
+    d_->show_ssn_labels->setEnabled(have_responses);
+    d_->show_time_deltas->setEnabled(have_responses);
+    d_->show_holes->setEnabled(have_responses);
     d_->button_box->button(QDialogButtonBox::Save)->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(true);
-    const BaSession &session = d_->sessions.at(session_index);
     QVector<double> anchor_times;
     QVector<double> anchor_sequences;
+    QVector<double> request_times;
+    QVector<double> request_sequences;
     QVector<double> window_upper_times;
     QVector<double> window_upper_sequences;
     QVector<double> set_times;
@@ -821,6 +893,14 @@ void WlanBlockAckGraphDialog::drawSession()
         previous_sequence = sample.starting_sequence;
         previous_unwrapped = unwrapped;
         have_previous = true;
+
+        if (sample.is_request) {
+            request_times.append(sample.relative_time);
+            request_sequences.append(unwrapped);
+            d_->request_sample_indexes.append(sample_index);
+            d_->request_unwrapped_sequences.append(unwrapped);
+            continue;
+        }
 
         anchor_times.append(sample.relative_time);
         anchor_sequences.append(unwrapped);
@@ -875,6 +955,7 @@ void WlanBlockAckGraphDialog::drawSession()
     }
 
     d_->anchor_graph->setData(anchor_times, anchor_sequences, true);
+    d_->request_graph->setData(request_times, request_sequences, true);
     d_->window_upper_graph->setData(window_upper_times, window_upper_sequences, true);
     d_->set_graph->setData(set_times, set_sequences, true);
     d_->hole_graph->setData(hole_times, hole_sequences, true);
@@ -884,26 +965,44 @@ void WlanBlockAckGraphDialog::drawSession()
     }
 
     d_->status_label->setText(
-                tr("%1 session(s) · %2 BA(s) in this session · %3 bitmap-set position(s) · "
-                   "%4 bitmap hole(s) · %5 unsupported BA frame(s) · %6 malformed")
+                tr("%1 session(s) · %2 BA / %3 BAR in this session · "
+                   "%4 bitmap-set position(s) · %5 bitmap hole(s) · "
+                   "%6/%7 unsupported BA/BAR · %8/%9 malformed BA/BAR")
                 .arg(d_->sessions.size())
-                .arg(session.samples.size())
+                .arg(response_count)
+                .arg(request_count)
                 .arg(set_times.size())
                 .arg(hole_times.size())
                 .arg(d_->unsupported_ba_frames)
-                .arg(d_->malformed_ba_frames));
+                .arg(d_->unsupported_bar_frames)
+                .arg(d_->malformed_ba_frames)
+                .arg(d_->malformed_bar_frames));
 
-    if (!session.samples.isEmpty()) {
-        int details_index = 0;
-        for (int anchor_index = 0;
-             anchor_index < d_->anchor_sample_indexes.size(); anchor_index++) {
-            int sample_index = d_->anchor_sample_indexes.at(anchor_index);
+    bool details_shown = false;
+    for (int anchor_index = 0;
+         anchor_index < d_->anchor_sample_indexes.size(); anchor_index++) {
+        int sample_index = d_->anchor_sample_indexes.at(anchor_index);
+        if (session.samples.at(sample_index).frame_number == preferred_frame) {
+            showSampleDetails(anchor_index);
+            details_shown = true;
+            break;
+        }
+    }
+    if (!details_shown) {
+        for (int request_index = 0;
+             request_index < d_->request_sample_indexes.size(); request_index++) {
+            int sample_index = d_->request_sample_indexes.at(request_index);
             if (session.samples.at(sample_index).frame_number == preferred_frame) {
-                details_index = anchor_index;
+                showRequestDetails(request_index);
+                details_shown = true;
                 break;
             }
         }
-        showSampleDetails(details_index);
+    }
+    if (!details_shown && !d_->anchor_sample_indexes.isEmpty()) {
+        showSampleDetails(0);
+    } else if (!details_shown && !d_->request_sample_indexes.isEmpty()) {
+        showRequestDetails(0);
     }
     resetAxes();
 }
@@ -924,10 +1023,12 @@ void WlanBlockAckGraphDialog::drawTimeDeltaLabels()
     }
 
     const QVector<BaSample> &samples = d_->sessions.at(session_index).samples;
-    qsizetype sample_count = std::min(samples.size(), d_->anchor_unwrapped_sequences.size());
-    for (qsizetype sample_index = 1; sample_index < sample_count; sample_index++) {
-        const BaSample &previous = samples.at(sample_index - 1);
-        const BaSample &sample = samples.at(sample_index);
+    qsizetype sample_count = std::min(d_->anchor_sample_indexes.size(),
+                                      d_->anchor_unwrapped_sequences.size());
+    for (qsizetype anchor_index = 1; anchor_index < sample_count; anchor_index++) {
+        const BaSample &previous = samples.at(
+                    d_->anchor_sample_indexes.at(anchor_index - 1));
+        const BaSample &sample = samples.at(d_->anchor_sample_indexes.at(anchor_index));
         double delta = sample.relative_time - previous.relative_time;
 
         QCPItemText *delta_label = new QCPItemText(d_->plot);
@@ -935,7 +1036,7 @@ void WlanBlockAckGraphDialog::drawTimeDeltaLabels()
                     QStringLiteral("baTimeDeltaLabel_%1").arg(sample.frame_number));
         delta_label->position->setAxes(d_->plot->xAxis, d_->plot->yAxis);
         delta_label->position->setCoords(previous.relative_time + delta / 2.0,
-                                         d_->anchor_unwrapped_sequences.at(sample_index - 1));
+                                         d_->anchor_unwrapped_sequences.at(anchor_index - 1));
         delta_label->setText(timeDeltaLabel(delta));
         delta_label->setPositionAlignment(Qt::AlignHCenter | Qt::AlignBottom);
         delta_label->setTextAlignment(Qt::AlignHCenter);
@@ -1003,7 +1104,41 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
                 .arg(unwrapped_upper_bound)
                 .arg(bitmap_detail));
 
+    d_->request_graph->setSelection(QCPDataSelection());
     d_->anchor_graph->setSelection(
+                QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
+    d_->plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void WlanBlockAckGraphDialog::showRequestDetails(int data_index)
+{
+    int session_index = currentSessionIndex();
+    if (session_index < 0 || session_index >= d_->sessions.size() ||
+        data_index < 0 || data_index >= d_->request_sample_indexes.size() ||
+        data_index >= d_->request_unwrapped_sequences.size()) {
+        return;
+    }
+
+    int sample_index = d_->request_sample_indexes.at(data_index);
+    const BaSession &session = d_->sessions.at(session_index);
+    const BaSample &sample = session.samples.at(sample_index);
+    if (!sample.is_request) {
+        return;
+    }
+    d_->selected_frame = sample.frame_number;
+
+    d_->details_label->setText(
+                tr("Frame %1 · %2 BAR · TA %3 → RA %4 · TID %5 · SSN %6 "
+                   "(unwrapped %7). Click a BAR point to go to this frame.")
+                .arg(sample.frame_number)
+                .arg(blockAckTypeName(sample.type))
+                .arg(session.ra, session.ta)
+                .arg(sample.tid)
+                .arg(sample.starting_sequence)
+                .arg(d_->request_unwrapped_sequences.at(data_index)));
+
+    d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->request_graph->setSelection(
                 QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
 }
@@ -1075,12 +1210,21 @@ void WlanBlockAckGraphDialog::plotClicked(QCPAbstractPlottable *plottable,
     if (!event || event->button() != Qt::LeftButton) {
         return;
     }
-    int anchor_index = anchorIndexForPlottable(plottable, data_index);
-    if (anchor_index >= 0) {
-        showSampleDetails(anchor_index);
-        if (!file_closed_ && d_->selected_frame > 0) {
-            emit goToPacket(static_cast<int>(d_->selected_frame));
+
+    bool sample_selected = false;
+    if (plottable == d_->request_graph &&
+        data_index >= 0 && data_index < d_->request_sample_indexes.size()) {
+        showRequestDetails(data_index);
+        sample_selected = true;
+    } else {
+        int anchor_index = anchorIndexForPlottable(plottable, data_index);
+        if (anchor_index >= 0) {
+            showSampleDetails(anchor_index);
+            sample_selected = true;
         }
+    }
+    if (sample_selected && !file_closed_ && d_->selected_frame > 0) {
+        emit goToPacket(static_cast<int>(d_->selected_frame));
     }
 }
 
@@ -1106,7 +1250,7 @@ void WlanBlockAckGraphDialog::zoomYAxis(bool in)
 
 void WlanBlockAckGraphDialog::resetAxes()
 {
-    if (d_->anchor_graph->data()->isEmpty()) {
+    if (d_->anchor_graph->data()->isEmpty() && d_->request_graph->data()->isEmpty()) {
         d_->plot->xAxis->setRange(0.0, 1.0);
         d_->plot->yAxis->setRange(0.0, 1.0);
         d_->plot->replot();
@@ -1114,7 +1258,22 @@ void WlanBlockAckGraphDialog::resetAxes()
     }
 
     bool have_x_range = false;
-    QCPRange x_range = d_->anchor_graph->getKeyRange(have_x_range);
+    QCPRange x_range;
+    const QVector<QCPGraph *> time_graphs = {
+        d_->anchor_graph, d_->request_graph
+    };
+    for (QCPGraph *graph : time_graphs) {
+        bool graph_has_range = false;
+        QCPRange graph_range = graph->getKeyRange(graph_has_range);
+        if (graph_has_range) {
+            if (have_x_range) {
+                x_range.expand(graph_range);
+            } else {
+                x_range = graph_range;
+                have_x_range = true;
+            }
+        }
+    }
     if (!have_x_range) {
         x_range = QCPRange(0.0, 1.0);
         d_->plot->xAxis->setRange(x_range);
@@ -1128,7 +1287,7 @@ void WlanBlockAckGraphDialog::resetAxes()
     bool have_y_range = false;
     QCPRange y_range;
     const QVector<QCPGraph *> value_graphs = {
-        d_->anchor_graph, d_->window_upper_graph, d_->set_graph,
+        d_->anchor_graph, d_->request_graph, d_->window_upper_graph, d_->set_graph,
         d_->show_holes->isChecked() ? d_->hole_graph : nullptr
     };
     for (QCPGraph *graph : value_graphs) {

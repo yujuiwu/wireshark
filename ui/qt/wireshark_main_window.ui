@@ -3071,7 +3071,7 @@
     <string>WLAN Block Ack Graph</string>
    </property>
    <property name="toolTip">
-    <string>Graph IEEE 802.11 Block Ack responses by directional TA, RA, and TID session.</string>
+    <string>Graph IEEE 802.11 Block Ack responses and requests by directional TA, RA, and TID session.</string>
    </property>
   </action>
   <action name="actionNewDisplayFilterExpression">
