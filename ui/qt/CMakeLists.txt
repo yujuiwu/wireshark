@@ -283,6 +283,7 @@ set(WIRESHARK_QT_HEADERS
 	wireshark_application.h
 	wireshark_dialog.h
 	wireshark_main_window.h
+	wlan_block_ack_graph_dialog.h
 	wlan_connection_timeline_dialog.h
 	wlan_statistics_dialog.h
 	${WIRESHARK_CUSTOM_QT_HEADERS}
@@ -554,6 +555,7 @@ set(WIRESHARK_QT_SRC
 	wireshark_dialog.cpp
 	wireshark_main_window.cpp
 	wireshark_main_window_slots.cpp
+	wlan_block_ack_graph_dialog.cpp
 	${WIRESHARK_CUSTOM_QT_SRCS}
 )
 

@@ -720,6 +720,7 @@
     <addaction name="separator"/>
     <addaction name="actionWirelessWlanStatistics"/>
     <addaction name="actionWirelessWlanConnectionTimeline"/>
+    <addaction name="actionWirelessWlanBlockAckGraph"/>
    </widget>
    <widget class="QMenu" name="menuTools">
     <property name="title">
@@ -3063,6 +3064,14 @@
    </property>
    <property name="toolTip">
     <string>Show IEEE 802.11 connection discovery, authentication, association, and key exchange events.</string>
+   </property>
+  </action>
+  <action name="actionWirelessWlanBlockAckGraph">
+   <property name="text">
+    <string>WLAN Block Ack Graph</string>
+   </property>
+   <property name="toolTip">
+    <string>Graph IEEE 802.11 Block Ack responses by directional TA, RA, and TID session.</string>
    </property>
   </action>
   <action name="actionNewDisplayFilterExpression">
