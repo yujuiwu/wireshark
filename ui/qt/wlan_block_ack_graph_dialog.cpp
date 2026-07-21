@@ -367,6 +367,7 @@ public:
     QCheckBox *show_ack_gaps = nullptr;
     QCheckBox *show_mpdus = nullptr;
     QCheckBox *show_persistent_holes = nullptr;
+    QCheckBox *show_bitmap_set = nullptr;
     QCheckBox *show_holes = nullptr;
     QCustomPlot *plot = nullptr;
     QLabel *details_label = nullptr;
@@ -452,6 +453,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                 tr("Show lifetimes of sequence numbers reported unacknowledged by two or more "
                    "consecutive Block Ack responses. This uses BA evidence only and does not "
                    "prove that an MPDU was transmitted or lost."));
+    d_->show_bitmap_set = new QCheckBox(tr("Show bitmap set"), this);
+    d_->show_bitmap_set->setObjectName(QStringLiteral("showBitmapSetCheckBox"));
+    d_->show_bitmap_set->setChecked(true);
+    d_->show_bitmap_set->setToolTip(
+                tr("Show green dots for set positions in each Block Ack bitmap."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(false);
@@ -535,6 +541,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->window_upper_graph->setSelectable(QCP::stNone);
 
     d_->set_graph = d_->plot->addGraph();
+    d_->set_graph->setObjectName(QStringLiteral("baBitmapSetGraph"));
     d_->set_graph->setName(tr("BA bitmap set"));
     d_->set_graph->setLineStyle(QCPGraph::lsNone);
     d_->set_graph->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssDisc,
@@ -600,6 +607,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     display_layout->addWidget(d_->show_ack_gaps);
     display_layout->addWidget(d_->show_mpdus);
     display_layout->addWidget(d_->show_persistent_holes);
+    display_layout->addWidget(d_->show_bitmap_set);
     display_layout->addWidget(d_->show_holes);
     display_layout->addStretch(1);
     main_layout->addLayout(display_layout);
@@ -642,6 +650,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::mpdusToggled);
     connect(d_->show_persistent_holes, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::persistentHolesToggled);
+    connect(d_->show_bitmap_set, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::bitmapSetToggled);
     connect(d_->show_holes, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
@@ -1056,6 +1066,7 @@ void WlanBlockAckGraphDialog::drawSession()
         d_->show_ack_gaps->setEnabled(false);
         d_->show_mpdus->setEnabled(false);
         d_->show_persistent_holes->setEnabled(false);
+        d_->show_bitmap_set->setEnabled(false);
         d_->show_holes->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Save)->setEnabled(false);
         d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(false);
@@ -1097,6 +1108,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->show_ack_gaps->setEnabled(have_responses);
     d_->show_mpdus->setEnabled(mpdu_count > 0);
     d_->show_persistent_holes->setEnabled(have_responses);
+    d_->show_bitmap_set->setEnabled(have_responses);
     d_->show_holes->setEnabled(have_responses);
     d_->button_box->button(QDialogButtonBox::Save)->setEnabled(true);
     d_->button_box->button(QDialogButtonBox::Reset)->setEnabled(true);
@@ -1426,6 +1438,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->show_persistent_holes->setEnabled(!d_->persistent_hole_spans.isEmpty());
     d_->persistent_hole_graph->setVisible(show_persistent_holes);
     d_->persistent_hole_error_bars->setVisible(show_persistent_holes);
+    d_->set_graph->setVisible(d_->show_bitmap_set->isChecked());
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
     if (d_->show_time_deltas->isChecked()) {
         drawTimeDeltaLabels();
@@ -1804,6 +1817,12 @@ void WlanBlockAckGraphDialog::persistentHolesToggled(bool checked)
     d_->plot->replot();
 }
 
+void WlanBlockAckGraphDialog::bitmapSetToggled(bool checked)
+{
+    d_->set_graph->setVisible(checked);
+    d_->plot->replot();
+}
+
 void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
 {
     d_->hole_graph->setVisible(checked);
@@ -1908,7 +1927,8 @@ void WlanBlockAckGraphDialog::resetAxes()
     bool have_y_range = false;
     QCPRange y_range;
     const QVector<QCPGraph *> value_graphs = {
-        d_->anchor_graph, d_->request_graph, d_->window_upper_graph, d_->set_graph,
+        d_->anchor_graph, d_->request_graph, d_->window_upper_graph,
+        d_->show_bitmap_set->isChecked() ? d_->set_graph : nullptr,
         d_->show_holes->isChecked() ? d_->hole_graph : nullptr,
         d_->show_persistent_holes->isChecked() ? d_->persistent_hole_graph : nullptr,
         d_->show_ack_gaps->isChecked() ? d_->advance_span_graph : nullptr,

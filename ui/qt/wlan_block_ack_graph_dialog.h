@@ -62,6 +62,7 @@ private slots:
     void ackGapsToggled(bool checked);
     void mpdusToggled(bool checked);
     void persistentHolesToggled(bool checked);
+    void bitmapSetToggled(bool checked);
     void bitmapHolesToggled(bool checked);
     void plotClicked(QCPAbstractPlottable *plottable, int data_index, QMouseEvent *event);
     void resetAxes();
