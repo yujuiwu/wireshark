@@ -101,6 +101,26 @@ static QRectF zoomRanges(QCustomPlot *plot, const QRect &zoom_rect)
     return QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized();
 }
 
+static int graphPointCountInRange(const QCPGraph *graph,
+                                  const QCPRange &key_range,
+                                  const QCPRange &value_range)
+{
+    if (!graph) {
+        return 0;
+    }
+
+    QSharedPointer<QCPGraphDataContainer> data = graph->data();
+    int count = 0;
+    auto begin = data->findBegin(key_range.lower, false);
+    auto end = data->findEnd(key_range.upper, false);
+    for (auto it = begin; it != end; ++it) {
+        if (value_range.contains(it->value)) {
+            count++;
+        }
+    }
+    return count;
+}
+
 using FieldIds = QVector<int>;
 using FieldInfos = QVector<const field_info *>;
 
@@ -723,6 +743,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::plotMouseMoved);
     connect(d_->plot, &QCustomPlot::mouseRelease,
             this, &WlanBlockAckGraphDialog::plotMouseReleased);
+    connect(d_->plot, &QCustomPlot::afterReplot,
+            this, &WlanBlockAckGraphDialog::updateGraphSummary);
     connect(zoom_in_x_action, &QAction::triggered,
             this, [this]() { zoomXAxis(true); });
     connect(zoom_out_x_action, &QAction::triggered,
@@ -1170,7 +1192,6 @@ void WlanBlockAckGraphDialog::drawSession()
     for (const BaSample &sample : session.samples) {
         response_count += sample.is_request ? 0 : 1;
     }
-    int request_count = static_cast<int>(session.samples.size()) - response_count;
     bool have_responses = response_count > 0;
     const auto mpdu_it = d_->captured_mpdus.constFind(
                 sessionKey(session.ta, session.ra, session.tid));
@@ -1518,25 +1539,6 @@ void WlanBlockAckGraphDialog::drawSession()
         drawTimeDeltaLabels();
     }
 
-    d_->status_label->setText(
-                tr("%1 session(s) · %2 BA / %3 BAR in this session · "
-                   "%4 captured QoS Data MPDU(s) · %5 bitmap-set position(s) · "
-                   "%6 bitmap hole(s) · %7 persistent-hole lifetime(s) · "
-                   "%8 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "%9/%10 unsupported BA/BAR · %11/%12 malformed BA/BAR")
-                .arg(d_->sessions.size())
-                .arg(response_count)
-                .arg(request_count)
-                .arg(mpdu_count)
-                .arg(set_times.size())
-                .arg(hole_times.size())
-                .arg(d_->persistent_hole_spans.size())
-                .arg(advance_span_times.size())
-                .arg(d_->unsupported_ba_frames)
-                .arg(d_->unsupported_bar_frames)
-                .arg(d_->malformed_ba_frames)
-                .arg(d_->malformed_bar_frames));
-
     bool details_shown = false;
     for (int anchor_index = 0;
          anchor_index < d_->anchor_sample_indexes.size(); anchor_index++) {
@@ -1573,6 +1575,45 @@ void WlanBlockAckGraphDialog::drawSession()
         showRequestDetails(0);
     }
     resetAxes();
+}
+
+void WlanBlockAckGraphDialog::updateGraphSummary()
+{
+    if (currentSessionIndex() < 0) {
+        return;
+    }
+
+    const QCPRange key_range = d_->plot->xAxis->range();
+    const QCPRange value_range = d_->plot->yAxis->range();
+    int persistent_hole_count = 0;
+    for (const PersistentHoleSpan &span : d_->persistent_hole_spans) {
+        if (value_range.contains(span.unwrapped_sequence) &&
+            span.first_relative_time <= key_range.upper &&
+            span.endpoint_relative_time >= key_range.lower) {
+            persistent_hole_count++;
+        }
+    }
+
+    d_->status_label->setText(
+                tr("%1 session(s) available · In view: %2 BA / %3 BAR · "
+                   "%4 captured QoS Data MPDU(s) · %5 bitmap-set position(s) · "
+                   "%6 bitmap hole(s) · %7 persistent-hole lifetime(s) · "
+                   "%8 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "Capture totals: %9/%10 unsupported BA/BAR · "
+                   "%11/%12 malformed BA/BAR")
+                .arg(d_->sessions.size())
+                .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
+                .arg(graphPointCountInRange(d_->request_graph, key_range, value_range))
+                .arg(graphPointCountInRange(d_->mpdu_graph, key_range, value_range))
+                .arg(graphPointCountInRange(d_->set_graph, key_range, value_range))
+                .arg(graphPointCountInRange(d_->hole_graph, key_range, value_range))
+                .arg(persistent_hole_count)
+                .arg(graphPointCountInRange(d_->advance_span_graph,
+                                            key_range, value_range))
+                .arg(d_->unsupported_ba_frames)
+                .arg(d_->unsupported_bar_frames)
+                .arg(d_->malformed_ba_frames)
+                .arg(d_->malformed_bar_frames));
 }
 
 void WlanBlockAckGraphDialog::clearTimeDeltaLabels()

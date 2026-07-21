@@ -44,6 +44,7 @@ private:
     void populateTids(int preferred_session = -1, int preferred_tid = -1);
     int currentSessionIndex() const;
     void drawSession();
+    void updateGraphSummary();
     void clearTimeDeltaLabels();
     void drawTimeDeltaLabels();
     void showSampleDetails(int data_index);
