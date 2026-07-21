@@ -552,7 +552,7 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "numbers for which no acknowledgment was observed before a later BA SSN "
                    "advanced "
                    "past them. Dark-red horizontal spans show persistent BA bitmap holes; click "
-                   "a square endpoint for its lifetime and resolution details. Purple diamonds "
+                   "a square endpoint for its lifetime and resolution details. Gold diamonds "
                    "show captured reverse-direction QoS Data MPDUs; they do not affect the "
                    "Block Ack analysis."));
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
@@ -595,8 +595,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->mpdu_graph->setName(tr("Captured QoS Data MPDU sequence"));
     d_->mpdu_graph->setLineStyle(QCPGraph::lsNone);
     d_->mpdu_graph->setScatterStyle(
-                QCPScatterStyle(QCPScatterStyle::ssDiamond, QColor(tango_plum_5),
-                                QColor(Qt::white), 6));
+                QCPScatterStyle(QCPScatterStyle::ssDiamond, QColor(tango_butter_6),
+                                QColor(tango_butter_3), 7));
     d_->mpdu_graph->setSelectable(QCP::stSingleData);
 
     d_->window_upper_graph = d_->plot->addGraph();
