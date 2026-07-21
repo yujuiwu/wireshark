@@ -20,8 +20,10 @@
 
 #include <QAction>
 #include <QByteArray>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCursor>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QHash>
@@ -29,6 +31,8 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QRubberBand>
 #include <QSet>
 #include <QVector>
 #include <QVBoxLayout>
@@ -48,6 +52,7 @@ constexpr uint32_t compressed_block_ack = 2;
 constexpr uint32_t multi_tid_block_ack = 3;
 constexpr int sequence_modulus = 4096;
 constexpr int sequence_half_range = sequence_modulus / 2;
+constexpr int min_zoom_pixels = 20;
 
 static int wrappedSequence(qint64 sequence)
 {
@@ -70,6 +75,30 @@ static QString timeDeltaLabel(double seconds)
                 format_units(nullptr, seconds, FORMAT_SIZE_UNIT_SECONDS,
                              FORMAT_SIZE_PREFIX_SI, 3));
     return QObject::tr("Δt %1").arg(elapsed);
+}
+
+static QRectF zoomRanges(QCustomPlot *plot, const QRect &zoom_rect)
+{
+    if (!plot) {
+        return QRectF();
+    }
+
+    QRect normalized_rect = zoom_rect.normalized();
+    if (normalized_rect.width() < min_zoom_pixels &&
+        normalized_rect.height() < min_zoom_pixels) {
+        return QRectF();
+    }
+
+    QRect selected_rect = plot->axisRect()->rect().intersected(normalized_rect);
+    if (selected_rect.width() <= 0 || selected_rect.height() <= 0) {
+        return QRectF();
+    }
+
+    double x1 = plot->xAxis->pixelToCoord(selected_rect.left());
+    double x2 = plot->xAxis->pixelToCoord(selected_rect.right());
+    double y1 = plot->yAxis->pixelToCoord(selected_rect.bottom());
+    double y2 = plot->yAxis->pixelToCoord(selected_rect.top());
+    return QRectF(QPointF(x1, y1), QPointF(x2, y2)).normalized();
 }
 
 using FieldIds = QVector<int>;
@@ -362,6 +391,8 @@ public:
 
     QComboBox *station_pair_combo = nullptr;
     QComboBox *tid_combo = nullptr;
+    QRadioButton *mouse_drag_radio = nullptr;
+    QRadioButton *mouse_zoom_radio = nullptr;
     QCheckBox *show_ssn_labels = nullptr;
     QCheckBox *show_time_deltas = nullptr;
     QCheckBox *show_ack_gaps = nullptr;
@@ -382,6 +413,8 @@ public:
     QCPErrorBars *persistent_hole_error_bars = nullptr;
     QCPGraph *advance_span_graph = nullptr;
     QCPGraph *mpdu_graph = nullptr;
+    QRubberBand *zoom_rubber_band = nullptr;
+    QPoint zoom_origin;
 
     uint32_t initially_selected_frame = 0;
     uint32_t selected_frame = 0;
@@ -419,6 +452,18 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->tid_combo->setObjectName(QStringLiteral("tidComboBox"));
     d_->tid_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     tid_label->setBuddy(d_->tid_combo);
+    d_->mouse_drag_radio = new QRadioButton(tr("Drag"), this);
+    d_->mouse_drag_radio->setObjectName(QStringLiteral("mouseDragRadioButton"));
+    d_->mouse_drag_radio->setToolTip(
+                tr("Drag the plot to pan, and click plotted points for packet details."));
+    d_->mouse_zoom_radio = new QRadioButton(tr("Zoom"), this);
+    d_->mouse_zoom_radio->setObjectName(QStringLiteral("mouseZoomRadioButton"));
+    d_->mouse_zoom_radio->setToolTip(
+                tr("Drag a rectangle over the plot to zoom both axes to that area."));
+    QButtonGroup *mouse_mode_group = new QButtonGroup(this);
+    mouse_mode_group->addButton(d_->mouse_drag_radio);
+    mouse_mode_group->addButton(d_->mouse_zoom_radio);
+    d_->mouse_drag_radio->setChecked(true);
     d_->show_ssn_labels = new QCheckBox(tr("Show SSN labels"), this);
     d_->show_ssn_labels->setObjectName(QStringLiteral("showSsnLabelsCheckBox"));
     d_->show_ssn_labels->setChecked(false);
@@ -479,10 +524,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->plot->setContextMenuPolicy(Qt::ActionsContextMenu);
     d_->plot->setFocusPolicy(Qt::StrongFocus);
     d_->plot->setToolTip(
-                tr("Drag to pan. Use the wheel over the plot to zoom both axes, or wheel and "
-                   "drag directly over an axis to change only that axis. Shortcuts: "
-                   "X / Shift+X and Y / Shift+Y. When enabled, gray dots mark sequence numbers "
-                   "for which no acknowledgment was observed before a later BA SSN advanced "
+                tr("In Drag mode, drag the plot to pan or drag directly over an axis to "
+                   "change only that axis. In Zoom mode, drag a rectangle to zoom both axes. "
+                   "Use the wheel over the plot to zoom both axes, or over an axis to zoom "
+                   "only that axis. Shortcuts: Z toggles Drag/Zoom mode; X / Shift+X and "
+                   "Y / Shift+Y zoom individual axes. When enabled, gray dots mark sequence "
+                   "numbers for which no acknowledgment was observed before a later BA SSN "
+                   "advanced "
                    "past them. Dark-red horizontal spans show persistent BA bitmap holes; click "
                    "a square endpoint for its lifetime and resolution details. Purple diamonds "
                    "show captured reverse-direction QoS Data MPDUs; they do not affect the "
@@ -601,6 +649,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->status_label->setObjectName(QStringLiteral("blockAckStatusLabel"));
     main_layout->addWidget(d_->status_label);
 
+    QHBoxLayout *mouse_layout = new QHBoxLayout;
+    mouse_layout->addWidget(new QLabel(tr("Mouse:"), this));
+    mouse_layout->addWidget(d_->mouse_drag_radio);
+    mouse_layout->addWidget(d_->mouse_zoom_radio);
+    mouse_layout->addStretch(1);
+    main_layout->addLayout(mouse_layout);
+
     QHBoxLayout *display_layout = new QHBoxLayout;
     display_layout->addWidget(d_->show_ssn_labels);
     display_layout->addWidget(d_->show_time_deltas);
@@ -635,11 +690,17 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     zoom_out_y_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Y));
     zoom_out_y_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     d_->plot->addAction(zoom_out_y_action);
+    QAction *toggle_mouse_mode_action = new QAction(tr("Toggle Mouse Drag/Zoom Mode"), d_->plot);
+    toggle_mouse_mode_action->setShortcut(QKeySequence(Qt::Key_Z));
+    toggle_mouse_mode_action->setShortcutContext(Qt::WindowShortcut);
+    d_->plot->addAction(toggle_mouse_mode_action);
 
     connect(d_->station_pair_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &WlanBlockAckGraphDialog::stationPairChanged);
     connect(d_->tid_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &WlanBlockAckGraphDialog::tidChanged);
+    connect(d_->mouse_zoom_radio, &QRadioButton::toggled,
+            this, &WlanBlockAckGraphDialog::mouseZoomToggled);
     connect(d_->show_ssn_labels, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::ssnLabelsToggled);
     connect(d_->show_time_deltas, &QCheckBox::toggled,
@@ -656,6 +717,12 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::bitmapHolesToggled);
     connect(d_->plot, &QCustomPlot::plottableClick,
             this, &WlanBlockAckGraphDialog::plotClicked);
+    connect(d_->plot, &QCustomPlot::mousePress,
+            this, &WlanBlockAckGraphDialog::plotMousePressed);
+    connect(d_->plot, &QCustomPlot::mouseMove,
+            this, &WlanBlockAckGraphDialog::plotMouseMoved);
+    connect(d_->plot, &QCustomPlot::mouseRelease,
+            this, &WlanBlockAckGraphDialog::plotMouseReleased);
     connect(zoom_in_x_action, &QAction::triggered,
             this, [this]() { zoomXAxis(true); });
     connect(zoom_out_x_action, &QAction::triggered,
@@ -664,6 +731,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, [this]() { zoomYAxis(true); });
     connect(zoom_out_y_action, &QAction::triggered,
             this, [this]() { zoomYAxis(false); });
+    connect(toggle_mouse_mode_action, &QAction::triggered, this, [this]() {
+        if (d_->mouse_zoom_radio->isChecked()) {
+            d_->mouse_drag_radio->setChecked(true);
+        } else {
+            d_->mouse_zoom_radio->setChecked(true);
+        }
+    });
     connect(d_->button_box->button(QDialogButtonBox::Save), &QPushButton::clicked,
             this, &WlanBlockAckGraphDialog::saveGraph);
     connect(d_->button_box->button(QDialogButtonBox::Reset), &QPushButton::clicked,
@@ -1826,6 +1900,69 @@ void WlanBlockAckGraphDialog::bitmapSetToggled(bool checked)
 void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
 {
     d_->hole_graph->setVisible(checked);
+    d_->plot->replot();
+}
+
+void WlanBlockAckGraphDialog::mouseZoomToggled(bool checked)
+{
+    QCP::Interactions interactions = QCP::iRangeZoom | QCP::iSelectPlottables;
+    if (checked) {
+        d_->plot->setCursor(QCursor(Qt::CrossCursor));
+    } else {
+        interactions |= QCP::iRangeDrag;
+        if (d_->zoom_rubber_band) {
+            d_->zoom_rubber_band->hide();
+        }
+        d_->plot->unsetCursor();
+    }
+    d_->plot->setInteractions(interactions);
+}
+
+void WlanBlockAckGraphDialog::plotMousePressed(QMouseEvent *event)
+{
+    if (!event || event->button() != Qt::LeftButton ||
+        !d_->mouse_zoom_radio->isChecked() ||
+        !d_->plot->axisRect()->rect().contains(event->pos())) {
+        return;
+    }
+
+    if (!d_->zoom_rubber_band) {
+        d_->zoom_rubber_band = new QRubberBand(QRubberBand::Rectangle, d_->plot);
+    }
+    d_->zoom_origin = event->pos();
+    d_->zoom_rubber_band->setGeometry(QRect(d_->zoom_origin, QSize()));
+    d_->zoom_rubber_band->show();
+}
+
+void WlanBlockAckGraphDialog::plotMouseMoved(QMouseEvent *event)
+{
+    if (!event || !d_->zoom_rubber_band || !d_->zoom_rubber_band->isVisible() ||
+        !event->buttons().testFlag(Qt::LeftButton)) {
+        return;
+    }
+    d_->zoom_rubber_band->setGeometry(
+                QRect(d_->zoom_origin, event->pos()).normalized());
+}
+
+void WlanBlockAckGraphDialog::plotMouseReleased(QMouseEvent *event)
+{
+    if (!event || event->button() != Qt::LeftButton ||
+        !d_->zoom_rubber_band || !d_->zoom_rubber_band->isVisible()) {
+        return;
+    }
+
+    d_->zoom_rubber_band->hide();
+    if (!d_->mouse_zoom_radio->isChecked()) {
+        return;
+    }
+
+    QRectF zoom_ranges = zoomRanges(d_->plot, QRect(d_->zoom_origin, event->pos()));
+    if (zoom_ranges.width() <= 0.0 || zoom_ranges.height() <= 0.0) {
+        return;
+    }
+
+    d_->plot->xAxis->setRange(zoom_ranges.left(), zoom_ranges.right());
+    d_->plot->yAxis->setRange(zoom_ranges.top(), zoom_ranges.bottom());
     d_->plot->replot();
 }
 

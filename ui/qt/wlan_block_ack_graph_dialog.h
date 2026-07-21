@@ -64,6 +64,10 @@ private slots:
     void persistentHolesToggled(bool checked);
     void bitmapSetToggled(bool checked);
     void bitmapHolesToggled(bool checked);
+    void mouseZoomToggled(bool checked);
+    void plotMousePressed(QMouseEvent *event);
+    void plotMouseMoved(QMouseEvent *event);
+    void plotMouseReleased(QMouseEvent *event);
     void plotClicked(QCPAbstractPlottable *plottable, int data_index, QMouseEvent *event);
     void resetAxes();
     void saveGraph();
