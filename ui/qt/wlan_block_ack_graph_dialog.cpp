@@ -179,7 +179,17 @@ struct BaStaPair {
     QString ta;
     QString ra;
     QVector<int> session_indexes;
+    int ba_count = 0;
 };
+
+static int baResponseCount(const BaSession &session)
+{
+    int count = 0;
+    for (const BaSample &sample : session.samples) {
+        count += sample.is_request ? 0 : 1;
+    }
+    return count;
+}
 
 static FieldIds fieldIdsByName(const char *name)
 {
@@ -465,12 +475,15 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->station_pair_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     d_->station_pair_combo->setToolTip(
                 tr("The pair direction follows Block Ack responses. Matching Block Ack "
-                   "Requests travel in the reverse direction."));
+                   "Requests travel in the reverse direction. Pairs are sorted by the "
+                   "received BA count summed across all TIDs."));
     station_pair_label->setBuddy(d_->station_pair_combo);
     QLabel *tid_label = new QLabel(tr("TID:"), this);
     d_->tid_combo = new QComboBox(this);
     d_->tid_combo->setObjectName(QStringLiteral("tidComboBox"));
     d_->tid_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    d_->tid_combo->setToolTip(
+                tr("TIDs are sorted by received BA count, highest first."));
     tid_label->setBuddy(d_->tid_combo);
     d_->mouse_drag_radio = new QRadioButton(tr("Drag"), this);
     d_->mouse_drag_radio->setObjectName(QStringLiteral("mouseDragRadioButton"));
@@ -1005,10 +1018,6 @@ void WlanBlockAckGraphDialog::populateSessions()
         }
     }
 
-    if (selected_session < 0 && !d_->sessions.isEmpty()) {
-        selected_session = 0;
-    }
-
     QVector<int> sorted_session_indexes;
     sorted_session_indexes.reserve(d_->sessions.size());
     for (int session_index = 0; session_index < d_->sessions.size(); session_index++) {
@@ -1038,7 +1047,35 @@ void WlanBlockAckGraphDialog::populateSessions()
             d_->sta_pairs.append(pair);
         }
         d_->sta_pairs.last().session_indexes.append(session_index);
+        // A response sample is stored per TID, so the pair total is the sum
+        // of the BA counts shown by all of its TID entries.
+        d_->sta_pairs.last().ba_count += baResponseCount(session);
     }
+
+    for (BaStaPair &pair : d_->sta_pairs) {
+        std::stable_sort(pair.session_indexes.begin(), pair.session_indexes.end(),
+                         [this](int left_index, int right_index) {
+            const BaSession &left = d_->sessions.at(left_index);
+            const BaSession &right = d_->sessions.at(right_index);
+            int left_ba_count = baResponseCount(left);
+            int right_ba_count = baResponseCount(right);
+            if (left_ba_count != right_ba_count) {
+                return left_ba_count > right_ba_count;
+            }
+            return left.tid < right.tid;
+        });
+    }
+
+    std::stable_sort(d_->sta_pairs.begin(), d_->sta_pairs.end(),
+                     [](const BaStaPair &left, const BaStaPair &right) {
+        if (left.ba_count != right.ba_count) {
+            return left.ba_count > right.ba_count;
+        }
+        if (left.ta != right.ta) {
+            return left.ta < right.ta;
+        }
+        return left.ra < right.ra;
+    });
 
     bool pair_signals_blocked = d_->station_pair_combo->blockSignals(true);
     bool tid_signals_blocked = d_->tid_combo->blockSignals(true);
@@ -1048,9 +1085,10 @@ void WlanBlockAckGraphDialog::populateSessions()
     for (int pair_index = 0; pair_index < d_->sta_pairs.size(); pair_index++) {
         const BaStaPair &pair = d_->sta_pairs.at(pair_index);
         d_->station_pair_combo->addItem(
-                    tr("%1 → %2 · %n TID(s)", "",
+                    tr("%1 → %2 · %3 BA(s) · %n TID(s)", "",
                        static_cast<int>(pair.session_indexes.size()))
-                    .arg(pair.ta, pair.ra), pair_index);
+                    .arg(pair.ta, pair.ra)
+                    .arg(pair.ba_count), pair_index);
         if (pair.session_indexes.contains(selected_session)) {
             selected_pair = pair_index;
         }
@@ -1084,10 +1122,7 @@ void WlanBlockAckGraphDialog::populateTids(int preferred_session, int preferred_
     int selected_tid_index = -1;
     for (int session_index : pair.session_indexes) {
         const BaSession &session = d_->sessions.at(session_index);
-        int response_count = 0;
-        for (const BaSample &sample : session.samples) {
-            response_count += sample.is_request ? 0 : 1;
-        }
+        int response_count = baResponseCount(session);
         int request_count = static_cast<int>(session.samples.size()) - response_count;
         d_->tid_combo->addItem(
                     tr("TID %1 · %2 BA(s) · %3 BAR(s)")
@@ -1188,10 +1223,7 @@ void WlanBlockAckGraphDialog::drawSession()
     }
 
     const BaSession &session = d_->sessions.at(session_index);
-    int response_count = 0;
-    for (const BaSample &sample : session.samples) {
-        response_count += sample.is_request ? 0 : 1;
-    }
+    int response_count = baResponseCount(session);
     bool have_responses = response_count > 0;
     const auto mpdu_it = d_->captured_mpdus.constFind(
                 sessionKey(session.ta, session.ra, session.tid));
