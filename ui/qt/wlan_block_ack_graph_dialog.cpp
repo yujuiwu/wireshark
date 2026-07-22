@@ -69,12 +69,16 @@ protected:
     }
 };
 
-static QString timeDeltaLabel(double seconds)
+static QString durationLabel(double seconds)
 {
-    QString elapsed = gchar_free_to_qstring(
+    return gchar_free_to_qstring(
                 format_units(nullptr, seconds, FORMAT_SIZE_UNIT_SECONDS,
                              FORMAT_SIZE_PREFIX_SI, 3));
-    return QObject::tr("Δt %1").arg(elapsed);
+}
+
+static QString timeDeltaLabel(double seconds)
+{
+    return QObject::tr("Δt %1").arg(durationLabel(seconds));
 }
 
 static QRectF zoomRanges(QCustomPlot *plot, const QRect &zoom_rect)
@@ -1627,13 +1631,15 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
     }
 
     d_->status_label->setText(
-                tr("%1 session(s) available · In view: %2 BA / %3 BAR · "
-                   "%4 captured QoS Data MPDU(s) · %5 bitmap-set position(s) · "
-                   "%6 bitmap hole(s) · %7 persistent-hole lifetime(s) · "
-                   "%8 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "Capture totals: %9/%10 unsupported BA/BAR · "
-                   "%11/%12 malformed BA/BAR")
+                tr("%1 session(s) available · X-axis duration: %2 · "
+                   "In view: %3 BA / %4 BAR · %5 captured QoS Data MPDU(s) · "
+                   "%6 bitmap-set position(s) · %7 bitmap hole(s) · "
+                   "%8 persistent-hole lifetime(s) · "
+                   "%9 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "Capture totals: %10/%11 unsupported BA/BAR · "
+                   "%12/%13 malformed BA/BAR")
                 .arg(d_->sessions.size())
+                .arg(durationLabel(key_range.size()))
                 .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->request_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->mpdu_graph, key_range, value_range))
