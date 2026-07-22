@@ -127,6 +127,7 @@
     .legend-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: .45rem .8rem; margin: .8rem 0 0; font-size: .82rem; }
     .key { display: inline-flex; align-items: center; gap: .38rem; }
     .swatch { width: 1.3rem; height: .3rem; border-radius: 999px; background: currentColor; }
+    .swatch.event { width: .18rem; height: 1.05rem; border-radius: 0; }
     .shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.2rem; }
     figure { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .75rem; background: var(--panel); box-shadow: 0 6px 18px rgb(22 39 55 / 7%); }
     figure img { display: block; width: 100%; height: auto; background: #eef2f4; }
@@ -177,7 +178,7 @@
       <div class="badges" aria-label="Guide scope">
         <span class="badge">Basic BA knowledge assumed</span>
         <span class="badge">Offline interactive replay</span>
-        <span class="badge">Identifiers sanitized</span>
+        <span class="badge">Packet bytes excluded</span>
       </div>
     </div>
   </header>
@@ -191,9 +192,9 @@
         <div class="metric"><strong>310,253</strong>packets in the source capture</div>
         <div class="metric"><strong>2,217</strong>Compressed BA responses</div>
         <div class="metric"><strong>234</strong>Compressed BARs</div>
-        <div class="metric"><strong>3</strong>sanitized teaching excerpts</div>
+        <div class="metric"><strong>5</strong>interactive teaching excerpts</div>
       </div>
-      <p>The examples below are independently analyzed time-window extracts from the supplied 802.11/radiotap support capture. Endpoint identifiers are replaced with Device A and Device B, absolute timestamps are removed, and every excerpt starts at zero. The embedded data contains only graph-level metadata—not packet bytes or payloads.</p>
+      <p>The examples below are independently analyzed time-window extracts from the supplied 802.11/radiotap support capture. Absolute timestamps are removed, every excerpt starts at zero, and the embedded data contains only graph-level metadata—not packet bytes or payloads. Most views use Device A and Device B; the agreement-lifecycle preset retains the requested frame numbers and BA pair so it can be checked directly against the case.</p>
     </section>
 
     <section aria-labelledby="explorer-heading">
@@ -222,6 +223,7 @@
                 <label class="option"><input id="layer-persistent" type="checkbox"> Show persistent-hole aging</label>
                 <label class="option"><input id="layer-set" type="checkbox" checked> Show bitmap set</label>
                 <label class="option"><input id="layer-holes" type="checkbox"> Show bitmap holes</label>
+                <label class="option"><input id="layer-agreements" type="checkbox" checked> Show ADDBA/DELBA events</label>
               </fieldset>
               <fieldset>
                 <legend>Axis controls</legend>
@@ -254,6 +256,11 @@
               <span class="key" style="color:var(--dark-red)"><span class="swatch"></span>Persistent-hole span</span>
               <span class="key" style="color:var(--gold)"><span class="swatch"></span>Captured MPDU diamond</span>
               <span class="key" style="color:var(--graphite)"><span class="swatch"></span>No-BA-ACK gap dot</span>
+              <span class="key" style="color:var(--purple)"><span class="swatch event"></span>ADDBA Request</span>
+              <span class="key" style="color:var(--green)"><span class="swatch event"></span>Accepted ADDBA Response</span>
+              <span class="key" style="color:var(--orange)"><span class="swatch event"></span>Rejected ADDBA Response</span>
+              <span class="key" style="color:var(--dark-red)"><span class="swatch event"></span>DELBA</span>
+              <span class="key" style="color:var(--graphite)"><span class="swatch event"></span>Inferred SSN epoch reset</span>
             </div>
           </div>
         </div>
@@ -322,6 +329,11 @@
           <h3>Selection, reset, and export</h3>
           <p>Click a marker for its type, normalized time, wrapped and unwrapped sequence, and relevant bitmap or lifetime facts. In Wireshark, selection also moves the packet list to the source frame. <strong>Reset Graph</strong> fits the active session; <strong>Save As…</strong> exports the plot as PDF, PNG, BMP, or JPEG.</p>
         </article>
+        <article class="feature">
+          <h3>ADDBA, DELBA, and inferred reset markers</h3>
+          <p><strong>Show ADDBA/DELBA events</strong> adds full-height agreement boundaries without changing axis scaling. A purple dashed <strong>ADDBA Req</strong> is context only. A green <strong>ADDBA OK</strong> means a successful response began a new agreement and cleared prior-set and persistent-hole history. An orange dash-dot <strong>ADDBA Reject</strong> is display-only and does not reset state. A dark-red dash-dot <strong>DELBA</strong> ended the agreement and cleared that history. If a backward SSN cannot extend the current frontier and no captured management boundary explains it, a gray dotted <strong>SSN reset</strong> starts a new analysis epoch. Click a line or compact label for its frame and effect.</p>
+          <p>The agreement-lifecycle preset shows request frame 12118, accepted response frame 12120, and DELBA frame 12192 for <code>00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b</code>, TID 0. These three management frames have explicitly good FCS. If an agreement event has an explicit bad-FCS indication, its marker is gray and its detail warns that the decoded evidence is untrusted; the event remains in the graph's analysis. Missing or unchecked FCS status is not treated as bad.</p>
+        </article>
       </div>
     </section>
 
@@ -339,6 +351,7 @@
             <tr><td>Persistent-hole aging</td><td>Off</td><td>Adds dark-red lifetimes and selectable endpoints.</td></tr>
             <tr><td>Bitmap set</td><td>On</td><td>Shows or hides set-position dots: normally green, gray for an explicit FCS-error BA.</td></tr>
             <tr><td>Bitmap holes</td><td>Off</td><td>Adds green prior-set crosses and red no-prior-set crosses; either is gray for an explicit FCS-error BA.</td></tr>
+            <tr><td>ADDBA/DELBA events</td><td>On</td><td>Adds vertical request, accepted or rejected response, DELBA, and inferred SSN-epoch-reset markers. Requests and rejected responses are display-only; accepted responses, DELBAs, and inferred resets delimit analysis history.</td></tr>
             <tr><td>Explicit FCS-error BA</td><td>Automatic</td><td>Overlays that BA's direct markers and SSN label in gray; unknown FCS status keeps normal colors.</td></tr>
             <tr><td>Viewport summary</td><td>Automatic</td><td>Tracks duration and all underlying in-range counts, even for hidden optional layers.</td></tr>
           </tbody>
@@ -372,9 +385,11 @@
             <tr><td>Verified</td><td>Prior-set zero classification</td><td>In the reported 21-BA viewport, the original 171 red zeros split into 48 green prior-set zeros and 123 red zeros. Frame 29438 alone splits 39 zeros into 13 green and 26 red.</td></tr>
             <tr><td>Verified</td><td>Explicit FCS-error classification</td><td>The same viewport has four bad-FCS BAs—frames 29412, 29438, 29771, and 29815—and 17 good-FCS BAs. Both <code>radiotap.flags.badfcs</code> and <code>wlan.fcs.status</code> identify the four gray samples.</td></tr>
             <tr><td>Verified</td><td>Agreement-boundary retry handling</td><td>A second real capture contains 96 successful ADDBA responses and 112 DELBA frames including retries. Retry-aware signatures retain 61 and 59 boundaries respectively, including the first observed retry when its original frame is absent.</td></tr>
+            <tr><td>Verified</td><td>Agreement-lifecycle case frames</td><td>Frame 12118 is an ADDBA Request for TID 0 with dialog token 2; frame 12120 is its successful status-0 response; frame 12192 is a TID 0 DELBA with reason 39 (peer timeout). The normalized BA pair is <code>00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b</code>.</td></tr>
+            <tr><td>Verified</td><td>Agreement-event FCS status</td><td>Radiotap bad-FCS is false and the WLAN FCS status is good for frames 12118, 12120, and 12192. The interactive renderer also supports the gray warning state for an explicitly bad-FCS event.</td></tr>
             <tr><td>Verified</td><td><code>cmake --build build --target wireshark -j4</code></td><td>Development Wireshark application compiled and linked with the graph changes.</td></tr>
             <tr><td>Verified</td><td><code>cmake --build build --target checkAPI_ui-qt -j4</code></td><td>Qt API-policy target passed; unrelated pre-existing notices did not fail the target.</td></tr>
-            <tr><td>Source-verified</td><td>Interactive HTML behavior</td><td>Handlers and calculations for scenario switches, seven layer controls, selection, drag/pan, rectangle zoom, wheel/keyboard zoom, reset, live counts, and duration are present. Browser-driven QA was unavailable in this session.</td></tr>
+            <tr><td>Source-verified</td><td>Interactive HTML behavior</td><td>Handlers and calculations for five scenario switches, eight layer controls, marker selection, drag/pan, rectangle zoom, wheel/keyboard zoom, reset, live counts, and duration are present. Browser-driven QA was unavailable in this session.</td></tr>
           </tbody>
         </table>
       </div>
@@ -382,7 +397,7 @@
     </section>
   </main>
 
-  <footer>WLAN Block Ack Graph User Guide · Real-capture examples are sanitized and time-normalized.</footer>
+  <footer>WLAN Block Ack Graph User Guide · Real-capture examples are time-normalized; packet bytes are not embedded.</footer>
 
   <script id="case-data" type="application/json">[
   {
@@ -2738,6 +2753,43 @@
     "mpdu": [],
     "gap": [],
     "span": []
+  },
+  {
+    "id": "agreement-lifecycle",
+    "title": "Agreement lifecycle",
+    "summary": "WQCPC-13082, TID 0: an ADDBA Request and accepted Response establish 00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b; one BAR/BA exchange and six matching MPDUs follow before DELBA ends the agreement 261.330 ms after acceptance.",
+    "duration": 0.3,
+    "verified": {
+      "ba": 1,
+      "bar": 1,
+      "mpdu": 6,
+      "set": 0,
+      "hole": 0,
+      "gap": 0,
+      "span": 0,
+      "agreement": 3
+    },
+    "ba": [
+      [0.031256, 1, 1, 65, "0000000000000000", false]
+    ],
+    "bar": [
+      [0.031248, 1, 1]
+    ],
+    "mpdu": [
+      [0.028508, 0, 0],
+      [0.067195, 1, 1],
+      [0.095229, 2, 2],
+      [0.138274, 3, 3],
+      [0.162807, 4, 4],
+      [0.217554, 5, 5]
+    ],
+    "gap": [],
+    "span": [],
+    "agreement": [
+      [0.016846, "request", "ADDBA Req", 12118, false, "00:90:4c:0d:c5:4b → 00:e0:4c:0c:01:ad · TID 0 · dialog token 2 · proposed SSN 0 · immediate BA · 64 buffers · display-only; does not reset analysis history"],
+      [0.017965, "accepted", "ADDBA OK", 12120, false, "00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b · TID 0 · dialog token 2 · status success · starts a new agreement and clears prior-set and persistent-hole history; later response retries are collapsed"],
+      [0.279295, "delba", "DELBA", 12192, false, "00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b · TID 0 · Initiator bit 0 · reason 39: requested from peer STA due to timeout · ends the agreement and clears analysis history"]
+    ]
   }
 ]</script>
   <script>
@@ -2754,7 +2806,7 @@
     const W = 1120, H = 620;
     const pw = W - margins.left - margins.right;
     const ph = H - margins.top - margins.bottom;
-    const layerIds = ['labels', 'deltas', 'gaps', 'mpdus', 'persistent', 'set', 'holes'];
+    const layerIds = ['labels', 'deltas', 'gaps', 'mpdus', 'persistent', 'set', 'holes', 'agreements'];
     const colors = {
       blue: '#155e93', orange: '#d56b08', purple: '#7a3ea1', green: '#16833d',
       red: '#c9362b', darkRed: '#8e1c19', gold: '#f0b429', graphite: '#53606c',
@@ -2800,7 +2852,16 @@
     }
     function generate(caseData) {
       const sets = [], holes = [], priorSetZeros = [], priorSets = new Set();
+      const boundaries = (caseData.agreement || [])
+        .filter(item => item[1] === 'accepted' || item[1] === 'delba' || item[1] === 'reset')
+        .slice()
+        .sort((left, right) => left[0] - right[0]);
+      let boundaryIndex = 0;
       caseData.ba.forEach(sample => {
+        while (boundaryIndex < boundaries.length && boundaries[boundaryIndex][0] <= sample[0]) {
+          priorSets.clear();
+          boundaryIndex++;
+        }
         const points = bitmapPoints(sample);
         points.filter(point => point.set).forEach(point => sets.push(point));
         points.filter(point => !point.set).forEach(point => {
@@ -2889,6 +2950,59 @@
         root.append(point);
       });
     }
+    function agreementAppearance(type, badFcs) {
+      let appearance;
+      if (type === 'request') appearance = { color: colors.purple, dash: '7 5' };
+      else if (type === 'accepted') appearance = { color: colors.green, dash: '' };
+      else if (type === 'rejected') appearance = { color: colors.orange, dash: '9 4 2 4' };
+      else if (type === 'delba') appearance = { color: colors.darkRed, dash: '9 4 2 4' };
+      else appearance = { color: colors.graphite, dash: '2 5' };
+      if (badFcs) appearance.color = colors.gray;
+      return appearance;
+    }
+    function drawAgreementEvents(root, c) {
+      if (!layer('agreements')) return;
+      (c.agreement || []).forEach(item => {
+        const [t, type, label, frame, badFcs = false, eventDetail = ''] = item;
+        if (t < view.x0 || t > view.x1) return;
+        const px = x(t);
+        const appearance = agreementAppearance(type, badFcs);
+        const attrs = {
+          x1: px, y1: margins.top, x2: px, y2: margins.top + ph,
+          stroke: appearance.color, 'stroke-width': 2,
+          'vector-effect': 'non-scaling-stroke'
+        };
+        if (appearance.dash) attrs['stroke-dasharray'] = appearance.dash;
+        root.append(el('line', attrs));
+
+        const fcsDetail = badFcs
+          ? ' · explicit FCS error: plotted gray; decoded boundary remains in the analysis but should be treated as untrusted'
+          : ' · explicitly good FCS';
+        const description = `${label}, frame ${frame}: ${duration(t)} · ${eventDetail}${fcsDetail}.`;
+        const hit = el('line', {
+          x1: px, y1: margins.top, x2: px, y2: margins.top + ph,
+          stroke: '#000', 'stroke-opacity': .001, 'stroke-width': 14,
+          'pointer-events': 'stroke'
+        });
+        interactive(hit, description);
+        root.append(hit);
+
+        const nearRight = px > margins.left + pw - 135;
+        const anchor = type === 'request' || nearRight ? 'end' : 'start';
+        const tx = px + (anchor === 'end' ? -5 : 5);
+        const row = type === 'accepted' || type === 'rejected' ? 1 :
+          (type === 'delba' || type === 'reset' ? 2 : 0);
+        const text = el('text', {
+          x: tx, y: margins.top + 15 + row * 15,
+          'text-anchor': anchor, fill: appearance.color,
+          'font-size': 11, 'font-weight': 750,
+          stroke: '#fff', 'stroke-width': 3, 'paint-order': 'stroke',
+          'stroke-linejoin': 'round'
+        }, label);
+        interactive(text, description);
+        root.append(text);
+      });
+    }
     function drawOverlays(root, c) {
       if (layer('set')) generated.sets.forEach((item, index) => {
         if (!inView(item.t, item.seq)) return;
@@ -2949,12 +3063,14 @@
         hole: generated.holes.filter(item => inView(item.t, item.seq)).length,
         badFcs: c.ba.filter(item => item[5] && inView(item[0], item[2])).length,
         span: c.span.filter(item => item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1).length,
-        gap: c.gap.filter(item => inView(item[0], item[1])).length
+        gap: c.gap.filter(item => inView(item[0], item[1])).length,
+        agreement: (c.agreement || []).filter(item => item[1] !== 'reset' && item[0] >= view.x0 && item[0] <= view.x1).length,
+        inferredReset: (c.agreement || []).filter(item => item[1] === 'reset' && item[0] >= view.x0 && item[0] <= view.x1).length
       };
     }
     function updateSummary(c) {
       const n = counts(c);
-      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots · ${n.badFcs} explicit-FCS-error BAs.`;
+      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.agreement} ADDBA/DELBA events · ${n.inferredReset} inferred SSN resets · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots · ${n.badFcs} explicit-FCS-error BAs.`;
     }
     function updateTable(c) {
       const events = [];
@@ -2962,6 +3078,9 @@
       c.bar.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BAR', item[0], wrap(item[2]), `BAR ${i + 1}`]); });
       c.mpdu.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['MPDU', item[0], wrap(item[2]), `MPDU ${i + 1}`]); });
       c.span.forEach((item, i) => { if (item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1) events.push(['Persistent hole', item[1], wrap(item[2]), `${item[3]} BAs; ${item[4]}`]); });
+      (c.agreement || []).forEach(item => {
+        if (item[0] >= view.x0 && item[0] <= view.x1) events.push([item[2], item[0], '—', `Frame ${item[3]}; ${item[5]}${item[4] ? '; explicit FCS error; plotted gray' : ''}`]);
+      });
       events.sort((a, b) => a[1] - b[1]);
       eventTable.replaceChildren();
       events.slice(0, 100).forEach(item => {
@@ -2993,6 +3112,7 @@
       clip.append(el('rect', { x: margins.left, y: margins.top, width: pw, height: ph }));
       const defs = el('defs'); defs.append(clip); root.append(defs);
       const marks = el('g', { 'clip-path': 'url(#plot-clip)' }); root.append(marks);
+      drawAgreementEvents(marks, c);
       drawCore(marks, c);
       drawOverlays(marks, c);
       updateSummary(c);
@@ -3005,17 +3125,19 @@
       scenarioCopy.textContent = c.summary;
       document.querySelectorAll('[data-scenario]').forEach((button, i) => button.setAttribute('aria-pressed', i === index ? 'true' : 'false'));
       let presetLayers;
-      if (c.id === 'normal-burst') {
-        presetLayers = { labels: true, deltas: true, gaps: false, mpdus: true, persistent: false, set: true, holes: false };
+      if (c.id === 'agreement-lifecycle') {
+        presetLayers = { labels: true, deltas: false, gaps: false, mpdus: true, persistent: false, set: true, holes: false, agreements: true };
+      } else if (c.id === 'normal-burst') {
+        presetLayers = { labels: true, deltas: true, gaps: false, mpdus: true, persistent: false, set: true, holes: false, agreements: true };
       } else if (c.id === 'persistent-holes') {
-        presetLayers = { labels: false, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true };
+        presetLayers = { labels: false, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true, agreements: true };
       } else if (c.id === 'prior-set-zeros') {
-        presetLayers = { labels: true, deltas: true, gaps: false, mpdus: false, persistent: false, set: true, holes: true };
+        presetLayers = { labels: true, deltas: true, gaps: false, mpdus: false, persistent: false, set: true, holes: true, agreements: true };
       } else {
-        presetLayers = { labels: true, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true };
+        presetLayers = { labels: true, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true, agreements: true };
       }
       for (const [name, checked] of Object.entries(presetLayers)) document.getElementById(`layer-${name}`).checked = checked;
-      detail.textContent = 'Select a plotted marker for details. Scenario data is sanitized and time-normalized.';
+      detail.textContent = 'Select a plotted marker for details. Scenario times are normalized to the start of each excerpt.';
       resetView();
     }
     function zoomAxis(axis, factor, center = null) {

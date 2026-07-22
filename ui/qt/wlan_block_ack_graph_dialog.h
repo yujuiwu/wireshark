@@ -13,6 +13,7 @@
 #include "wireshark_dialog.h"
 
 class QCPAbstractPlottable;
+class QCPAbstractItem;
 class QMouseEvent;
 
 class WlanBlockAckGraphDialog : public WiresharkDialog
@@ -47,10 +48,15 @@ private:
     void updateGraphSummary();
     void clearTimeDeltaLabels();
     void drawTimeDeltaLabels();
+    void clearAgreementEventMarkers();
+    void drawAgreementEventMarkers();
+    void updateAgreementEventLabelVisibility();
+    void clearAgreementEventSelection();
     void showSampleDetails(int data_index);
     void showRequestDetails(int data_index);
     void showMpduDetails(int data_index);
     void showPersistentHoleDetails(int data_index);
+    void showAgreementEventDetails(int event_index);
     int anchorIndexForPlottable(QCPAbstractPlottable *plottable, int data_index) const;
     void zoomXAxis(bool in);
     void zoomYAxis(bool in);
@@ -65,11 +71,13 @@ private slots:
     void persistentHolesToggled(bool checked);
     void bitmapSetToggled(bool checked);
     void bitmapHolesToggled(bool checked);
+    void agreementEventsToggled(bool checked);
     void mouseZoomToggled(bool checked);
     void plotMousePressed(QMouseEvent *event);
     void plotMouseMoved(QMouseEvent *event);
     void plotMouseReleased(QMouseEvent *event);
     void plotClicked(QCPAbstractPlottable *plottable, int data_index, QMouseEvent *event);
+    void plotItemClicked(QCPAbstractItem *item, QMouseEvent *event);
     void resetAxes();
     void saveGraph();
 };
