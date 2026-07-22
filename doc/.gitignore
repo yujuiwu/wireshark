@@ -2,5 +2,6 @@
 ###########
 *.[14]
 *.html
+!wlan_block_ack_graph.html
 *.tmp
 wireshark.pod

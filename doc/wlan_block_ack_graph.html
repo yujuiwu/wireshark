@@ -1,0 +1,3041 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>WLAN Block Ack Graph User Guide</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --ink: #17212b;
+      --muted: #576574;
+      --paper: #f7f9fb;
+      --panel: #ffffff;
+      --line: #d6dde5;
+      --accent: #0b6fa4;
+      --accent-soft: #e7f4fb;
+      --blue: #155e93;
+      --orange: #d56b08;
+      --purple: #7a3ea1;
+      --green: #16833d;
+      --red: #c9362b;
+      --dark-red: #8e1c19;
+      --gold: #f0b429;
+      --graphite: #53606c;
+      --shadow: 0 12px 30px rgb(22 39 55 / 10%);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: #075f90; }
+    a:focus-visible, button:focus-visible, input:focus-visible, #plot:focus-visible {
+      outline: 3px solid #f0a500;
+      outline-offset: 3px;
+    }
+    .skip-link {
+      position: fixed;
+      z-index: 20;
+      top: .5rem;
+      left: .5rem;
+      transform: translateY(-180%);
+      padding: .65rem .9rem;
+      background: #fff;
+      color: #111;
+      border: 2px solid #111;
+    }
+    .skip-link:focus { transform: none; }
+    header {
+      background: linear-gradient(135deg, #073b57, #0b6f8e 58%, #17865c);
+      color: #fff;
+      padding: clamp(2.2rem, 6vw, 5.5rem) 1.25rem 3.5rem;
+    }
+    .header-inner, main, footer { max-width: 1240px; margin: auto; }
+    .eyebrow { margin: 0 0 .6rem; font-size: .82rem; font-weight: 760; letter-spacing: .12em; text-transform: uppercase; opacity: .88; }
+    h1 { max-width: 850px; margin: 0; font-size: clamp(2.2rem, 5vw, 4.7rem); line-height: 1.02; letter-spacing: -.04em; }
+    .lede { max-width: 790px; margin: 1.25rem 0 0; font-size: clamp(1.05rem, 2vw, 1.3rem); color: #e7f6fa; }
+    .badges { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1.4rem; }
+    .badge { padding: .35rem .7rem; border: 1px solid rgb(255 255 255 / 42%); border-radius: 999px; background: rgb(255 255 255 / 10%); font-size: .88rem; }
+    main { padding: 2rem 1.25rem 5rem; }
+    h2 { margin: 3.6rem 0 1rem; font-size: clamp(1.6rem, 3vw, 2.35rem); line-height: 1.15; letter-spacing: -.02em; }
+    h3 { margin: 2.25rem 0 .7rem; font-size: 1.25rem; }
+    p, li { max-width: 82ch; }
+    .notice { padding: 1rem 1.1rem; border-left: 5px solid #d58000; border-radius: .35rem; background: #fff5d9; color: #3b2b00; }
+    .provenance { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin: 1.2rem 0 0; }
+    .metric { padding: .9rem; border: 1px solid var(--line); border-radius: .65rem; background: var(--panel); }
+    .metric strong { display: block; font-size: 1.35rem; color: var(--accent); }
+    .explorer {
+      margin-top: 1.4rem;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .explorer-head { padding: 1rem 1.1rem; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #f8fbfd, #edf4f8); }
+    .scenario-buttons { display: flex; flex-wrap: wrap; gap: .55rem; }
+    button {
+      min-height: 2.45rem;
+      padding: .48rem .8rem;
+      border: 1px solid #9aa9b7;
+      border-radius: .45rem;
+      color: #17212b;
+      background: #fff;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    button:hover { background: #edf5fa; }
+    button[aria-pressed="true"], button.primary { border-color: #086994; background: #086994; color: #fff; }
+    .scenario-copy { margin: .65rem 0 0; color: var(--muted); }
+    .explorer-grid { display: grid; grid-template-columns: minmax(185px, 225px) minmax(0, 1fr); }
+    .controls { padding: 1rem; border-right: 1px solid var(--line); background: #f8fafc; }
+    fieldset { margin: 0 0 1rem; padding: .75rem; border: 1px solid var(--line); border-radius: .55rem; }
+    legend { padding: 0 .35rem; font-size: .83rem; font-weight: 780; letter-spacing: .04em; text-transform: uppercase; }
+    label.option { display: flex; align-items: flex-start; gap: .55rem; margin: .48rem 0; font-size: .9rem; }
+    input { margin-top: .2rem; accent-color: #086994; }
+    .button-stack { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; }
+    .button-stack button { padding-inline: .45rem; font-size: .84rem; }
+    .plot-area { min-width: 0; padding: .75rem; }
+    #plot {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 430px;
+      border: 1px solid #aeb8c1;
+      border-radius: .4rem;
+      background: #fff;
+      touch-action: none;
+      user-select: none;
+    }
+    #plot text { font-family: system-ui, -apple-system, sans-serif; }
+    .summary, .detail {
+      margin: .7rem 0 0;
+      padding: .65rem .75rem;
+      border-radius: .45rem;
+      background: #eef4f7;
+      font-size: .9rem;
+    }
+    .detail { min-height: 3.2rem; background: #fff8e7; }
+    .hint { margin: .6rem 0 0; color: var(--muted); font-size: .83rem; }
+    .legend-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: .45rem .8rem; margin: .8rem 0 0; font-size: .82rem; }
+    .key { display: inline-flex; align-items: center; gap: .38rem; }
+    .swatch { width: 1.3rem; height: .3rem; border-radius: 999px; background: currentColor; }
+    .shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.2rem; }
+    figure { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .75rem; background: var(--panel); box-shadow: 0 6px 18px rgb(22 39 55 / 7%); }
+    figure img { display: block; width: 100%; height: auto; background: #eef2f4; }
+    figcaption { padding: .8rem .9rem; font-size: .9rem; color: var(--muted); }
+    .feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .feature { padding: 1rem 1.1rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--panel); }
+    .feature h3 { margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    th, td { padding: .55rem .65rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #edf3f7; }
+    code { padding: .08em .28em; border-radius: .25rem; background: #e9eef2; color: #24313b; }
+    details { margin-top: 1rem; }
+    details > summary { cursor: pointer; font-weight: 700; }
+    .table-scroll { overflow-x: auto; margin-top: .65rem; }
+    footer { padding: 1.8rem 1.25rem 3rem; border-top: 1px solid var(--line); color: var(--muted); }
+    @media (max-width: 900px) {
+      .provenance, .shots, .feature-grid { grid-template-columns: 1fr 1fr; }
+      .explorer-grid { grid-template-columns: 1fr; }
+      .controls { border-right: 0; border-bottom: 1px solid var(--line); }
+      .controls-inner { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+      .controls fieldset { margin: 0; }
+      .legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 560px) {
+      .provenance, .shots, .feature-grid, .controls-inner { grid-template-columns: 1fr; }
+      #plot { min-height: 330px; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    @media print {
+      header { padding: 1.2rem 0; background: none; color: #000; }
+      .lede { color: #222; }
+      .explorer { box-shadow: none; }
+      .controls, .scenario-buttons, .hint, .skip-link { display: none; }
+      .explorer-grid { display: block; }
+      main { padding: 0; }
+      h2 { break-after: avoid; }
+      figure, .feature { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to guide</a>
+  <header>
+    <div class="header-inner">
+      <p class="eyebrow">Wireshark graph guide · real-capture examples</p>
+      <h1>Read WLAN Block Ack behavior at a glance</h1>
+      <p class="lede">Use the graph to relate BA window movement, bitmap evidence, BARs, and captured QoS Data MPDUs—then zoom into the interval that matters.</p>
+      <div class="badges" aria-label="Guide scope">
+        <span class="badge">Basic BA knowledge assumed</span>
+        <span class="badge">Offline interactive replay</span>
+        <span class="badge">Identifiers sanitized</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section aria-labelledby="purpose-heading">
+      <h2 id="purpose-heading">What the graph answers</h2>
+      <p>The WLAN Block Ack Graph turns BA responses, reverse-direction BARs, and matching QoS Data frames into a capture-relative time versus sequence-number view. It helps you see how the receive window moved, which bitmap positions were set, whether zero positions persisted, and what evidence lies inside the current viewport.</p>
+      <p class="notice"><strong>Interpretation boundary:</strong> a bitmap zero or an SSN-advance gap does not prove an MPDU was transmitted or lost. A captured MPDU does not prove reception. Treat every overlay as capture evidence, not a standalone loss verdict.</p>
+      <div class="provenance" aria-label="Real capture provenance">
+        <div class="metric"><strong>310,253</strong>packets in the source capture</div>
+        <div class="metric"><strong>2,217</strong>Compressed BA responses</div>
+        <div class="metric"><strong>234</strong>Compressed BARs</div>
+        <div class="metric"><strong>3</strong>sanitized teaching excerpts</div>
+      </div>
+      <p>The examples below are independently analyzed time-window extracts from the supplied 802.11/radiotap support capture. Endpoint identifiers are replaced with Device A and Device B, absolute timestamps are removed, and every excerpt starts at zero. The embedded data contains only graph-level metadata—not packet bytes or payloads.</p>
+    </section>
+
+    <section aria-labelledby="explorer-heading">
+      <h2 id="explorer-heading">Interactive real-case explorer</h2>
+      <p>Select a scenario, turn layers on and off, click a marker, or choose <strong>Zoom</strong> and drag a rectangle. The viewport summary and X-axis duration update immediately, just as they do below the Wireshark graph.</p>
+
+      <div class="explorer" id="explorer">
+        <div class="explorer-head">
+          <div class="scenario-buttons" id="scenario-buttons" aria-label="Real-case scenarios"></div>
+          <p class="scenario-copy" id="scenario-copy"></p>
+        </div>
+        <div class="explorer-grid">
+          <aside class="controls" aria-label="Graph controls">
+            <div class="controls-inner">
+              <fieldset>
+                <legend>Mouse</legend>
+                <label class="option"><input type="radio" name="mouse-mode" value="drag" checked> Drag / pan</label>
+                <label class="option"><input type="radio" name="mouse-mode" value="zoom"> Zoom rectangle</label>
+              </fieldset>
+              <fieldset>
+                <legend>Display</legend>
+                <label class="option"><input id="layer-labels" type="checkbox"> Show SSN labels</label>
+                <label class="option"><input id="layer-deltas" type="checkbox"> Show BA time deltas</label>
+                <label class="option"><input id="layer-gaps" type="checkbox"> Show BA ACK gaps</label>
+                <label class="option"><input id="layer-mpdus" type="checkbox"> Show captured MPDUs</label>
+                <label class="option"><input id="layer-persistent" type="checkbox"> Show persistent-hole aging</label>
+                <label class="option"><input id="layer-set" type="checkbox" checked> Show bitmap set</label>
+                <label class="option"><input id="layer-holes" type="checkbox"> Show bitmap holes</label>
+              </fieldset>
+              <fieldset>
+                <legend>Axis controls</legend>
+                <div class="button-stack">
+                  <button type="button" id="x-in" aria-label="Zoom X axis in">X +</button>
+                  <button type="button" id="x-out" aria-label="Zoom X axis out">X −</button>
+                  <button type="button" id="y-in" aria-label="Zoom Y axis in">Y +</button>
+                  <button type="button" id="y-out" aria-label="Zoom Y axis out">Y −</button>
+                </div>
+                <button type="button" id="reset" class="primary" style="width:100%;margin-top:.5rem">Reset graph</button>
+              </fieldset>
+            </div>
+          </aside>
+          <div class="plot-area">
+            <svg id="plot" viewBox="0 0 1120 620" role="img" tabindex="0" aria-labelledby="plot-title plot-desc">
+              <title id="plot-title">Interactive WLAN Block Ack graph</title>
+              <desc id="plot-desc">Time versus unwrapped 12-bit sequence number. Use the controls to show graph layers and zoom.</desc>
+            </svg>
+            <p class="summary" id="viewport-summary" aria-live="polite"></p>
+            <p class="detail" id="selected-detail" aria-live="polite">Select a BA, BAR, MPDU, bitmap position, or persistent-hole endpoint for details.</p>
+            <p class="hint">Pointer: drag to pan or rectangle-zoom; wheel zooms around the pointer. Keyboard: <kbd>Z</kbd> toggles Drag/Zoom, <kbd>X</kbd>/<kbd>Shift+X</kbd> zoom X, and <kbd>Y</kbd>/<kbd>Shift+Y</kbd> zoom Y.</p>
+            <div class="legend-grid" aria-label="Graph legend">
+              <span class="key" style="color:var(--blue)"><span class="swatch"></span>BA starting sequence</span>
+              <span class="key" style="color:var(--orange)"><span class="swatch"></span>BA window upper bound</span>
+              <span class="key" style="color:var(--purple)"><span class="swatch"></span>BAR triangle</span>
+              <span class="key" style="color:var(--green)"><span class="swatch"></span>Bitmap-set dot</span>
+              <span class="key" style="color:var(--red)"><span class="swatch"></span>Bitmap-hole cross</span>
+              <span class="key" style="color:var(--dark-red)"><span class="swatch"></span>Persistent-hole span</span>
+              <span class="key" style="color:var(--gold)"><span class="swatch"></span>Captured MPDU diamond</span>
+              <span class="key" style="color:var(--graphite)"><span class="swatch"></span>No-BA-ACK gap dot</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <noscript><p class="notice">JavaScript is disabled. The three static real-case views below preserve the key examples.</p></noscript>
+    </section>
+
+    <section aria-labelledby="screens-heading">
+      <h2 id="screens-heading">Three real scenarios</h2>
+      <div class="shots">
+        <figure>
+          <img src="wsug_src/images/ws-wlan-ba-real-normal.png" width="1800" height="1000" loading="lazy" alt="Sanitized real-data graph showing advancing blue BA steps, purple BAR triangles, gold MPDU diamonds, green bitmap-set dots, SSN labels, and BA time deltas.">
+          <figcaption><strong>Normal BA progress.</strong> Twenty-nine BA responses advance from SSN 4 to 101 over a 4.4-second excerpt. Five BARs and 213 matching captured MPDUs make marker comparison concrete.</figcaption>
+        </figure>
+        <figure>
+          <img src="wsug_src/images/ws-wlan-ba-real-holes.png" width="1800" height="1000" loading="lazy" alt="Sanitized real-data graph showing dense red bitmap-hole crosses, green set dots, gold MPDU diamonds, and dark-red persistent-hole lifetimes.">
+          <figcaption><strong>Persistent bitmap holes.</strong> Twenty-one BAs hold SSN 1 while 20 holes age across the bitmaps and are progressively acknowledged. The 44.65-second excerpt contains 444 set positions and 228 plotted zeros.</figcaption>
+        </figure>
+        <figure>
+          <img src="wsug_src/images/ws-wlan-ba-real-wrap.png" width="1800" height="1000" loading="lazy" alt="Sanitized real-data graph showing the BA sequence trace continuing upward through labels 4095 and 0 without dropping to the bottom of the chart.">
+          <figcaption><strong>Sequence wrap.</strong> Twenty BAs progress from 4086 through 4095 and continue at 0 through 10. The Y-axis labels stay modulo 4096 while the internal values remain continuous.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section aria-labelledby="features-heading">
+      <h2 id="features-heading">Read each feature</h2>
+      <div class="feature-grid">
+        <article class="feature">
+          <h3>BA pair and TID selectors</h3>
+          <p>The <strong>BA pair (TA → RA)</strong> list is sorted by the total received BA count summed across every TID, highest first; each item shows that total and its number of TIDs. Within a pair, the <strong>TID</strong> list is also sorted by received BA count, highest first, and shows its BA and BAR counts. Address order and numeric TID order break ties. A session matching the selected packet remains selected; otherwise the busiest pair and TID are the defaults.</p>
+        </article>
+        <article class="feature">
+          <h3>Core BA, window, and bitmap-set traces</h3>
+          <p>The blue step trace is the BA SSN. The orange trace is the exclusive receive-window upper bound: unwrapped SSN plus the number of bitmap sequence positions. Green dots are set positions. Clear <strong>Show bitmap set</strong> when dense green evidence hides the core traces; the analysis and summary counts remain unchanged. See the normal and holes screenshots.</p>
+        </article>
+        <article class="feature">
+          <h3>SSN and BA timing labels</h3>
+          <p><strong>Show SSN labels</strong> adds wrapped 12-bit values below the BA points. <strong>Show BA time deltas</strong> adds elapsed time from the previous BA above each blue segment. Labels annotate the graph only. The normal screenshot shows both.</p>
+        </article>
+        <article class="feature">
+          <h3>BARs and captured MPDUs</h3>
+          <p>Purple, white-filled triangles identify reverse-direction BAR starting sequences. Optional QoS Data observations use gold diamonds with dark outlines, making them distinct by color and shape. A-MPDU members are plotted separately. They do not change BA analysis. See the normal screenshot.</p>
+        </article>
+        <article class="feature">
+          <h3>Bitmap holes and persistent aging</h3>
+          <p>Red crosses are zero positions before the highest set position in one BA; trailing zeros are not plotted. A dark-red span means the position remained zero across at least two consecutive covering BAs. Its square endpoint reports age and outcome. The holes screenshot shows both layers.</p>
+        </article>
+        <article class="feature">
+          <h3>No BA ACK before SSN advance</h3>
+          <p>Gray dots appear when a later BA SSN passes sequence numbers for which no BA acknowledgment was observed. This is missing BA evidence—not proof of transmission or loss. Turn the layer on in the normal scenario to inspect 35 real gap positions.</p>
+        </article>
+        <article class="feature">
+          <h3>Rectangle zoom and live summary</h3>
+          <p>Select <strong>Zoom</strong> and drag a rectangle over the plot, use the wheel, or use the X/Y controls. The summary recomputes BA, BAR, MPDU, set, hole, persistent-span, and gap counts for the X/Y viewport. <strong>X-axis duration</strong> is the displayed axis span, including margins—not simply the first-to-last event time.</p>
+        </article>
+        <article class="feature">
+          <h3>12-bit sequence wrapping</h3>
+          <p>The graph unwraps progress internally, so 4095→0 continues upward. Tick and SSN labels remain modulo 4096. In the wrap screenshot, SSN 0 is plotted internally at 4096. Old backward samples that cannot extend the acknowledgment frontier begin a new analysis epoch.</p>
+        </article>
+        <article class="feature">
+          <h3>Selection, reset, and export</h3>
+          <p>Click a marker for its type, normalized time, wrapped and unwrapped sequence, and relevant bitmap or lifetime facts. In Wireshark, selection also moves the packet list to the source frame. <strong>Reset Graph</strong> fits the active session; <strong>Save As…</strong> exports the plot as PDF, PNG, BMP, or JPEG.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="quick-heading">
+      <h2 id="quick-heading">Quick reference</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Control or series</th><th>Default</th><th>What changes</th></tr></thead>
+          <tbody>
+            <tr><td>BA pair / TID</td><td>Selected packet, otherwise busiest</td><td>Selects one normalized BA-response-direction session. Both lists are sorted by received BA count, highest first; pair totals sum all of their TIDs.</td></tr>
+            <tr><td>Drag / Zoom</td><td>Drag</td><td>Pans the axes or replaces both ranges with a selected rectangle.</td></tr>
+            <tr><td>SSN labels / BA time deltas</td><td>Off</td><td>Adds wrapped SSNs and spacing between consecutive BA responses.</td></tr>
+            <tr><td>BA ACK gaps</td><td>Off</td><td>Adds gray no-observed-BA-ACK-before-advance positions.</td></tr>
+            <tr><td>Captured MPDUs</td><td>Off</td><td>Adds gold reverse-direction QoS Data diamonds.</td></tr>
+            <tr><td>Persistent-hole aging</td><td>Off</td><td>Adds dark-red lifetimes and selectable endpoints.</td></tr>
+            <tr><td>Bitmap set</td><td>On</td><td>Shows or hides green set-position dots only.</td></tr>
+            <tr><td>Bitmap holes</td><td>Off</td><td>Adds red crosses for zeros before the highest set position.</td></tr>
+            <tr><td>Viewport summary</td><td>Automatic</td><td>Tracks duration and all underlying in-range counts, even for hidden optional layers.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <details>
+        <summary>Accessible list of events currently in view</summary>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Type</th><th>Time from excerpt start</th><th>Sequence</th><th>Details</th></tr></thead>
+            <tbody id="event-table"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <section aria-labelledby="tests-heading">
+      <h2 id="tests-heading">Appendix: verified tests</h2>
+      <p>The real source capture was inspected locally and is not included in this document. All 2,451 BA/BAR control frames in it are Compressed BA format; this case does not verify the other supported BA formats.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Status</th><th>Check</th><th>Verified result</th></tr></thead>
+          <tbody>
+            <tr><td>Verified</td><td><code>capinfos &lt;capture.pcap&gt;</code></td><td>310,253 packets; radiotap IEEE 802.11; 3,700.708032-second duration.</td></tr>
+            <tr><td>Verified</td><td>Built <code>tshark</code> BA/BAR field extraction</td><td>2,217 BA responses and 234 BARs; all supported Compressed BA with 8-byte bitmaps.</td></tr>
+            <tr><td>Verified</td><td>Normal excerpt replay</td><td>29 BA, 5 BAR, 213 matching MPDU observations, 64 set positions, and 35 BA ACK-gap positions.</td></tr>
+            <tr><td>Verified</td><td>Persistent-hole excerpt replay</td><td>21 BA, 29 MPDUs, 444 set positions, 228 bitmap holes, and 20 persistent-hole lifetimes.</td></tr>
+            <tr><td>Verified</td><td>Wrap excerpt replay</td><td>20 BA responses; SSNs progress 4086…4095, 0…10 while the plotted sequence stays continuous.</td></tr>
+            <tr><td>Verified</td><td>BA pair ranking</td><td>The supplied capture sorts the 1,171-BA pair before the reverse 1,046-BA pair; the latter total equals 1,042 BAs on TID 0 plus 4 on TID 7.</td></tr>
+            <tr><td>Verified</td><td>TID ranking</td><td>A second real-capture pair sorts TID 6 with 2 BAs before TID 0 with 1 BA, reversing numeric TID order as required.</td></tr>
+            <tr><td>Verified</td><td><code>cmake --build build --target wireshark -j4</code></td><td>Development Wireshark application compiled and linked with the graph changes.</td></tr>
+            <tr><td>Verified</td><td><code>cmake --build build --target checkAPI_ui-qt -j4</code></td><td>Qt API-policy target passed; unrelated pre-existing notices did not fail the target.</td></tr>
+            <tr><td>Source-verified</td><td>Interactive HTML behavior</td><td>Handlers and calculations for scenario switches, seven layer controls, selection, drag/pan, rectangle zoom, wheel/keyboard zoom, reset, live counts, and duration are present. Browser-driven QA was unavailable in this session.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>No dedicated automated GUI test for the WLAN Block Ack Graph exists in this source tree. Build and API checks do not replace the manual behavior checks above.</p>
+    </section>
+  </main>
+
+  <footer>WLAN Block Ack Graph User Guide · Real-capture examples are sanitized and time-normalized.</footer>
+
+  <script id="case-data" type="application/json">[
+  {
+    "id": "normal-burst",
+    "title": "Normal BA progress",
+    "summary": "A four-second traffic burst where BA SSNs advance from 4 to 101 alongside BARs and captured MPDUs.",
+    "duration": 4.4,
+    "verified": {
+      "ba": 29,
+      "bar": 5,
+      "mpdu": 213,
+      "set": 64,
+      "hole": 0,
+      "gap": 35,
+      "span": 0
+    },
+    "ba": [
+      [
+        0.237627,
+        4,
+        4,
+        68,
+        "0000000000000000"
+      ],
+      [
+        0.238523,
+        4,
+        4,
+        68,
+        "0000000000000000"
+      ],
+      [
+        0.244016,
+        4,
+        4,
+        68,
+        "0000000000000000"
+      ],
+      [
+        0.245503,
+        4,
+        4,
+        68,
+        "0000000000000000"
+      ],
+      [
+        0.318477,
+        5,
+        5,
+        69,
+        "0700000000000000"
+      ],
+      [
+        1.278667,
+        11,
+        11,
+        75,
+        "0300000000000000"
+      ],
+      [
+        1.322494,
+        18,
+        18,
+        82,
+        "0700000000000000"
+      ],
+      [
+        1.335227,
+        21,
+        21,
+        85,
+        "0300000000000000"
+      ],
+      [
+        1.351118,
+        25,
+        25,
+        89,
+        "0300000000000000"
+      ],
+      [
+        1.387353,
+        29,
+        29,
+        93,
+        "0300000000000000"
+      ],
+      [
+        1.904101,
+        35,
+        35,
+        99,
+        "0300000000000000"
+      ],
+      [
+        2.020759,
+        38,
+        38,
+        102,
+        "0300000000000000"
+      ],
+      [
+        2.141225,
+        41,
+        41,
+        105,
+        "0300000000000000"
+      ],
+      [
+        2.342057,
+        44,
+        44,
+        108,
+        "1f00000000000000"
+      ],
+      [
+        2.426333,
+        49,
+        49,
+        113,
+        "0700000000000000"
+      ],
+      [
+        2.551288,
+        56,
+        56,
+        120,
+        "0f00000000000000"
+      ],
+      [
+        2.562532,
+        60,
+        60,
+        124,
+        "0300000000000000"
+      ],
+      [
+        2.59176,
+        64,
+        64,
+        128,
+        "0700000000000000"
+      ],
+      [
+        2.816849,
+        69,
+        69,
+        133,
+        "0300000000000000"
+      ],
+      [
+        2.913564,
+        71,
+        71,
+        135,
+        "0100000000000000"
+      ],
+      [
+        2.979704,
+        73,
+        73,
+        137,
+        "0300000000000000"
+      ],
+      [
+        3.009798,
+        75,
+        75,
+        139,
+        "0f00000000000000"
+      ],
+      [
+        3.019355,
+        79,
+        79,
+        143,
+        "0300000000000000"
+      ],
+      [
+        3.168454,
+        81,
+        81,
+        145,
+        "0700000000000000"
+      ],
+      [
+        3.324671,
+        86,
+        86,
+        150,
+        "0300000000000000"
+      ],
+      [
+        3.426268,
+        88,
+        88,
+        152,
+        "0f00000000000000"
+      ],
+      [
+        3.847637,
+        94,
+        94,
+        158,
+        "0700000000000000"
+      ],
+      [
+        4.025793,
+        99,
+        99,
+        163,
+        "0300000000000000"
+      ],
+      [
+        4.248932,
+        101,
+        101,
+        165,
+        "0300000000000000"
+      ]
+    ],
+    "bar": [
+      [
+        0.237062,
+        4,
+        4
+      ],
+      [
+        0.237069,
+        4,
+        4
+      ],
+      [
+        0.237767,
+        4,
+        4
+      ],
+      [
+        0.243997,
+        4,
+        4
+      ],
+      [
+        0.245496,
+        4,
+        4
+      ]
+    ],
+    "mpdu": [
+      [
+        0.202203,
+        0,
+        0
+      ],
+      [
+        0.208524,
+        1,
+        1
+      ],
+      [
+        0.209072,
+        1,
+        1
+      ],
+      [
+        0.210184,
+        2,
+        2
+      ],
+      [
+        0.210188,
+        2,
+        2
+      ],
+      [
+        0.215993,
+        2,
+        2
+      ],
+      [
+        0.216167,
+        3,
+        3
+      ],
+      [
+        0.316866,
+        4,
+        4
+      ],
+      [
+        0.318266,
+        5,
+        5
+      ],
+      [
+        0.318269,
+        6,
+        6
+      ],
+      [
+        0.318272,
+        7,
+        7
+      ],
+      [
+        0.624125,
+        8,
+        8
+      ],
+      [
+        0.813194,
+        9,
+        9
+      ],
+      [
+        1.228414,
+        10,
+        10
+      ],
+      [
+        1.27866,
+        11,
+        11
+      ],
+      [
+        1.278663,
+        12,
+        12
+      ],
+      [
+        1.295019,
+        13,
+        13
+      ],
+      [
+        1.299804,
+        14,
+        14
+      ],
+      [
+        1.303639,
+        15,
+        15
+      ],
+      [
+        1.307012,
+        16,
+        16
+      ],
+      [
+        1.307019,
+        16,
+        16
+      ],
+      [
+        1.307022,
+        16,
+        16
+      ],
+      [
+        1.307984,
+        16,
+        16
+      ],
+      [
+        1.309698,
+        16,
+        16
+      ],
+      [
+        1.322468,
+        17,
+        17
+      ],
+      [
+        1.322485,
+        18,
+        18
+      ],
+      [
+        1.322488,
+        19,
+        19
+      ],
+      [
+        1.322491,
+        20,
+        20
+      ],
+      [
+        1.33522,
+        21,
+        21
+      ],
+      [
+        1.335225,
+        22,
+        22
+      ],
+      [
+        1.335233,
+        23,
+        23
+      ],
+      [
+        1.33838,
+        24,
+        24
+      ],
+      [
+        1.338388,
+        24,
+        24
+      ],
+      [
+        1.338391,
+        24,
+        24
+      ],
+      [
+        1.339188,
+        24,
+        24
+      ],
+      [
+        1.347509,
+        25,
+        25
+      ],
+      [
+        1.347516,
+        25,
+        25
+      ],
+      [
+        1.347519,
+        25,
+        25
+      ],
+      [
+        1.349214,
+        25,
+        25
+      ],
+      [
+        1.351111,
+        25,
+        25
+      ],
+      [
+        1.351115,
+        26,
+        26
+      ],
+      [
+        1.358524,
+        27,
+        27
+      ],
+      [
+        1.358535,
+        28,
+        28
+      ],
+      [
+        1.387343,
+        29,
+        29
+      ],
+      [
+        1.387349,
+        30,
+        30
+      ],
+      [
+        1.563482,
+        31,
+        31
+      ],
+      [
+        1.563489,
+        31,
+        31
+      ],
+      [
+        1.563492,
+        31,
+        31
+      ],
+      [
+        1.563498,
+        31,
+        31
+      ],
+      [
+        1.563743,
+        31,
+        31
+      ],
+      [
+        1.583544,
+        32,
+        32
+      ],
+      [
+        1.58355,
+        32,
+        32
+      ],
+      [
+        1.583553,
+        32,
+        32
+      ],
+      [
+        1.583556,
+        32,
+        32
+      ],
+      [
+        1.587333,
+        32,
+        32
+      ],
+      [
+        1.722544,
+        33,
+        33
+      ],
+      [
+        1.72255,
+        33,
+        33
+      ],
+      [
+        1.722553,
+        33,
+        33
+      ],
+      [
+        1.722555,
+        33,
+        33
+      ],
+      [
+        1.723182,
+        33,
+        33
+      ],
+      [
+        1.768248,
+        33,
+        33
+      ],
+      [
+        1.81798,
+        34,
+        34
+      ],
+      [
+        1.817986,
+        34,
+        34
+      ],
+      [
+        1.817989,
+        34,
+        34
+      ],
+      [
+        1.817993,
+        34,
+        34
+      ],
+      [
+        1.818142,
+        34,
+        34
+      ],
+      [
+        1.90409,
+        35,
+        35
+      ],
+      [
+        1.904096,
+        36,
+        36
+      ],
+      [
+        1.920444,
+        37,
+        37
+      ],
+      [
+        1.920452,
+        37,
+        37
+      ],
+      [
+        2.020749,
+        38,
+        38
+      ],
+      [
+        2.020755,
+        39,
+        39
+      ],
+      [
+        2.120403,
+        40,
+        40
+      ],
+      [
+        2.131855,
+        41,
+        41
+      ],
+      [
+        2.131862,
+        41,
+        41
+      ],
+      [
+        2.131865,
+        42,
+        42
+      ],
+      [
+        2.131868,
+        41,
+        41
+      ],
+      [
+        2.131871,
+        42,
+        42
+      ],
+      [
+        2.13246,
+        41,
+        41
+      ],
+      [
+        2.132466,
+        42,
+        42
+      ],
+      [
+        2.141218,
+        41,
+        41
+      ],
+      [
+        2.141222,
+        42,
+        42
+      ],
+      [
+        2.329148,
+        43,
+        43
+      ],
+      [
+        2.329709,
+        44,
+        44
+      ],
+      [
+        2.329714,
+        45,
+        45
+      ],
+      [
+        2.329717,
+        46,
+        46
+      ],
+      [
+        2.338703,
+        44,
+        44
+      ],
+      [
+        2.338706,
+        45,
+        45
+      ],
+      [
+        2.338709,
+        46,
+        46
+      ],
+      [
+        2.339045,
+        44,
+        44
+      ],
+      [
+        2.339048,
+        45,
+        45
+      ],
+      [
+        2.339051,
+        46,
+        46
+      ],
+      [
+        2.34192,
+        44,
+        44
+      ],
+      [
+        2.341925,
+        45,
+        45
+      ],
+      [
+        2.341928,
+        46,
+        46
+      ],
+      [
+        2.341931,
+        47,
+        47
+      ],
+      [
+        2.341933,
+        48,
+        48
+      ],
+      [
+        2.352725,
+        49,
+        49
+      ],
+      [
+        2.354713,
+        49,
+        49
+      ],
+      [
+        2.355238,
+        49,
+        49
+      ],
+      [
+        2.355646,
+        49,
+        49
+      ],
+      [
+        2.35953,
+        49,
+        49
+      ],
+      [
+        2.402053,
+        49,
+        49
+      ],
+      [
+        2.402056,
+        50,
+        50
+      ],
+      [
+        2.402059,
+        51,
+        51
+      ],
+      [
+        2.426324,
+        49,
+        49
+      ],
+      [
+        2.426327,
+        50,
+        50
+      ],
+      [
+        2.42633,
+        51,
+        51
+      ],
+      [
+        2.430257,
+        52,
+        52
+      ],
+      [
+        2.495057,
+        53,
+        53
+      ],
+      [
+        2.551258,
+        56,
+        56
+      ],
+      [
+        2.551263,
+        57,
+        57
+      ],
+      [
+        2.551269,
+        58,
+        58
+      ],
+      [
+        2.551271,
+        59,
+        59
+      ],
+      [
+        2.551278,
+        56,
+        56
+      ],
+      [
+        2.551281,
+        57,
+        57
+      ],
+      [
+        2.551283,
+        58,
+        58
+      ],
+      [
+        2.551286,
+        59,
+        59
+      ],
+      [
+        2.555086,
+        60,
+        60
+      ],
+      [
+        2.555344,
+        60,
+        60
+      ],
+      [
+        2.562526,
+        60,
+        60
+      ],
+      [
+        2.562529,
+        61,
+        61
+      ],
+      [
+        2.564005,
+        62,
+        62
+      ],
+      [
+        2.564013,
+        63,
+        63
+      ],
+      [
+        2.591142,
+        64,
+        64
+      ],
+      [
+        2.591148,
+        65,
+        65
+      ],
+      [
+        2.591152,
+        64,
+        64
+      ],
+      [
+        2.591155,
+        65,
+        65
+      ],
+      [
+        2.591158,
+        64,
+        64
+      ],
+      [
+        2.591161,
+        65,
+        65
+      ],
+      [
+        2.591752,
+        64,
+        64
+      ],
+      [
+        2.591755,
+        65,
+        65
+      ],
+      [
+        2.591758,
+        66,
+        66
+      ],
+      [
+        2.794338,
+        67,
+        67
+      ],
+      [
+        2.816269,
+        68,
+        68
+      ],
+      [
+        2.816843,
+        69,
+        69
+      ],
+      [
+        2.816846,
+        70,
+        70
+      ],
+      [
+        2.911103,
+        71,
+        71
+      ],
+      [
+        2.911109,
+        72,
+        72
+      ],
+      [
+        2.911112,
+        71,
+        71
+      ],
+      [
+        2.911114,
+        72,
+        72
+      ],
+      [
+        2.911117,
+        71,
+        71
+      ],
+      [
+        2.911119,
+        72,
+        72
+      ],
+      [
+        2.911123,
+        71,
+        71
+      ],
+      [
+        2.911126,
+        72,
+        72
+      ],
+      [
+        2.913558,
+        71,
+        71
+      ],
+      [
+        2.913561,
+        72,
+        72
+      ],
+      [
+        2.916759,
+        72,
+        72
+      ],
+      [
+        2.975386,
+        73,
+        73
+      ],
+      [
+        2.975392,
+        74,
+        74
+      ],
+      [
+        2.975397,
+        73,
+        73
+      ],
+      [
+        2.975399,
+        74,
+        74
+      ],
+      [
+        2.975403,
+        73,
+        73
+      ],
+      [
+        2.975405,
+        74,
+        74
+      ],
+      [
+        2.975408,
+        73,
+        73
+      ],
+      [
+        2.97541,
+        74,
+        74
+      ],
+      [
+        2.979694,
+        73,
+        73
+      ],
+      [
+        2.9797,
+        74,
+        74
+      ],
+      [
+        3.009787,
+        75,
+        75
+      ],
+      [
+        3.00979,
+        76,
+        76
+      ],
+      [
+        3.009792,
+        77,
+        77
+      ],
+      [
+        3.009795,
+        78,
+        78
+      ],
+      [
+        3.019344,
+        79,
+        79
+      ],
+      [
+        3.01935,
+        80,
+        80
+      ],
+      [
+        3.152479,
+        81,
+        81
+      ],
+      [
+        3.152485,
+        82,
+        82
+      ],
+      [
+        3.152489,
+        81,
+        81
+      ],
+      [
+        3.152491,
+        82,
+        82
+      ],
+      [
+        3.152495,
+        81,
+        81
+      ],
+      [
+        3.152497,
+        82,
+        82
+      ],
+      [
+        3.168439,
+        81,
+        81
+      ],
+      [
+        3.168445,
+        82,
+        82
+      ],
+      [
+        3.168448,
+        83,
+        83
+      ],
+      [
+        3.17805,
+        84,
+        84
+      ],
+      [
+        3.178061,
+        85,
+        85
+      ],
+      [
+        3.324654,
+        86,
+        86
+      ],
+      [
+        3.32466,
+        87,
+        87
+      ],
+      [
+        3.324664,
+        86,
+        86
+      ],
+      [
+        3.324667,
+        87,
+        87
+      ],
+      [
+        3.433734,
+        92,
+        92
+      ],
+      [
+        3.841186,
+        94,
+        94
+      ],
+      [
+        3.84119,
+        95,
+        95
+      ],
+      [
+        3.841192,
+        96,
+        96
+      ],
+      [
+        3.841195,
+        94,
+        94
+      ],
+      [
+        3.841197,
+        95,
+        95
+      ],
+      [
+        3.8412,
+        96,
+        96
+      ],
+      [
+        3.841575,
+        94,
+        94
+      ],
+      [
+        3.841581,
+        95,
+        95
+      ],
+      [
+        3.841584,
+        96,
+        96
+      ],
+      [
+        3.847629,
+        94,
+        94
+      ],
+      [
+        3.847632,
+        95,
+        95
+      ],
+      [
+        3.847635,
+        96,
+        96
+      ],
+      [
+        3.915364,
+        97,
+        97
+      ],
+      [
+        3.915367,
+        98,
+        98
+      ],
+      [
+        3.917508,
+        97,
+        97
+      ],
+      [
+        3.917512,
+        98,
+        98
+      ],
+      [
+        4.025783,
+        99,
+        99
+      ],
+      [
+        4.025789,
+        100,
+        100
+      ],
+      [
+        4.247757,
+        101,
+        101
+      ],
+      [
+        4.247763,
+        102,
+        102
+      ],
+      [
+        4.247767,
+        101,
+        101
+      ],
+      [
+        4.24777,
+        102,
+        102
+      ],
+      [
+        4.247773,
+        101,
+        101
+      ],
+      [
+        4.247776,
+        102,
+        102
+      ],
+      [
+        4.247779,
+        101,
+        101
+      ],
+      [
+        4.247782,
+        102,
+        102
+      ],
+      [
+        4.248925,
+        101,
+        101
+      ],
+      [
+        4.248929,
+        102,
+        102
+      ],
+      [
+        4.260169,
+        103,
+        103
+      ],
+      [
+        4.359063,
+        104,
+        104
+      ],
+      [
+        4.359071,
+        104,
+        104
+      ],
+      [
+        4.359074,
+        104,
+        104
+      ],
+      [
+        4.359077,
+        104,
+        104
+      ]
+    ],
+    "gap": [
+      [
+        0.318477,
+        4
+      ],
+      [
+        1.278667,
+        8
+      ],
+      [
+        1.278667,
+        9
+      ],
+      [
+        1.278667,
+        10
+      ],
+      [
+        1.322494,
+        13
+      ],
+      [
+        1.322494,
+        14
+      ],
+      [
+        1.322494,
+        15
+      ],
+      [
+        1.322494,
+        16
+      ],
+      [
+        1.322494,
+        17
+      ],
+      [
+        1.351118,
+        23
+      ],
+      [
+        1.351118,
+        24
+      ],
+      [
+        1.387353,
+        27
+      ],
+      [
+        1.387353,
+        28
+      ],
+      [
+        1.904101,
+        31
+      ],
+      [
+        1.904101,
+        32
+      ],
+      [
+        1.904101,
+        33
+      ],
+      [
+        1.904101,
+        34
+      ],
+      [
+        2.020759,
+        37
+      ],
+      [
+        2.141225,
+        40
+      ],
+      [
+        2.342057,
+        43
+      ],
+      [
+        2.551288,
+        52
+      ],
+      [
+        2.551288,
+        53
+      ],
+      [
+        2.551288,
+        54
+      ],
+      [
+        2.551288,
+        55
+      ],
+      [
+        2.59176,
+        62
+      ],
+      [
+        2.59176,
+        63
+      ],
+      [
+        2.816849,
+        67
+      ],
+      [
+        2.816849,
+        68
+      ],
+      [
+        2.979704,
+        72
+      ],
+      [
+        3.324671,
+        84
+      ],
+      [
+        3.324671,
+        85
+      ],
+      [
+        3.847637,
+        92
+      ],
+      [
+        3.847637,
+        93
+      ],
+      [
+        4.025793,
+        97
+      ],
+      [
+        4.025793,
+        98
+      ]
+    ],
+    "span": []
+  },
+  {
+    "id": "persistent-holes",
+    "title": "Persistent bitmap holes",
+    "summary": "A real interval where twenty bitmap holes age across consecutive BAs and are progressively acknowledged.",
+    "duration": 44.65,
+    "verified": {
+      "ba": 21,
+      "bar": 0,
+      "mpdu": 29,
+      "set": 444,
+      "hole": 228,
+      "gap": 0,
+      "span": 20
+    },
+    "ba": [
+      [
+        0.111742,
+        1,
+        1,
+        65,
+        "ff03008000000000"
+      ],
+      [
+        0.528444,
+        1,
+        1,
+        65,
+        "ff07008000000000"
+      ],
+      [
+        1.138222,
+        1,
+        1,
+        65,
+        "ff0f008000000000"
+      ],
+      [
+        2.78014,
+        1,
+        1,
+        65,
+        "ff1f008000000000"
+      ],
+      [
+        4.232938,
+        1,
+        1,
+        65,
+        "ff3f008000000000"
+      ],
+      [
+        5.082236,
+        1,
+        1,
+        65,
+        "ff7f008000000000"
+      ],
+      [
+        5.082955,
+        1,
+        1,
+        65,
+        "ffff008000000000"
+      ],
+      [
+        6.360245,
+        1,
+        1,
+        65,
+        "ffff018000000000"
+      ],
+      [
+        10.768615,
+        1,
+        1,
+        65,
+        "ffff038000000000"
+      ],
+      [
+        10.768627,
+        1,
+        1,
+        65,
+        "ffff0f8000000000"
+      ],
+      [
+        10.772678,
+        1,
+        1,
+        65,
+        "ffff0f8000000000"
+      ],
+      [
+        11.380778,
+        1,
+        1,
+        65,
+        "ffff1f8000000000"
+      ],
+      [
+        13.227297,
+        1,
+        1,
+        65,
+        "ffff3f8000000000"
+      ],
+      [
+        27.180222,
+        1,
+        1,
+        65,
+        "ffff7f8000000000"
+      ],
+      [
+        27.351102,
+        1,
+        1,
+        65,
+        "ffffff8000000000"
+      ],
+      [
+        36.162746,
+        1,
+        1,
+        65,
+        "ffffff8100000000"
+      ],
+      [
+        39.223661,
+        1,
+        1,
+        65,
+        "ffffff8300000000"
+      ],
+      [
+        40.029256,
+        1,
+        1,
+        65,
+        "ffffff8700000000"
+      ],
+      [
+        40.037641,
+        1,
+        1,
+        65,
+        "ffffff9f00000000"
+      ],
+      [
+        40.042054,
+        1,
+        1,
+        65,
+        "ffffff9f00000000"
+      ],
+      [
+        44.259743,
+        1,
+        1,
+        65,
+        "ffffffff00000000"
+      ]
+    ],
+    "bar": [],
+    "mpdu": [
+      [
+        0.010083,
+        6,
+        6
+      ],
+      [
+        0.037939,
+        7,
+        7
+      ],
+      [
+        0.040223,
+        8,
+        8
+      ],
+      [
+        0.063742,
+        9,
+        9
+      ],
+      [
+        0.111737,
+        10,
+        10
+      ],
+      [
+        0.52844,
+        11,
+        11
+      ],
+      [
+        1.138169,
+        12,
+        12
+      ],
+      [
+        2.780137,
+        13,
+        13
+      ],
+      [
+        4.232935,
+        14,
+        14
+      ],
+      [
+        5.082196,
+        15,
+        15
+      ],
+      [
+        5.082951,
+        16,
+        16
+      ],
+      [
+        6.360242,
+        17,
+        17
+      ],
+      [
+        10.76861,
+        18,
+        18
+      ],
+      [
+        10.768621,
+        19,
+        19
+      ],
+      [
+        10.768624,
+        20,
+        20
+      ],
+      [
+        10.772672,
+        19,
+        19
+      ],
+      [
+        10.772676,
+        20,
+        20
+      ],
+      [
+        11.380774,
+        21,
+        21
+      ],
+      [
+        13.227293,
+        22,
+        22
+      ],
+      [
+        27.180105,
+        23,
+        23
+      ],
+      [
+        27.3511,
+        24,
+        24
+      ],
+      [
+        36.162743,
+        25,
+        25
+      ],
+      [
+        39.223658,
+        26,
+        26
+      ],
+      [
+        40.029254,
+        27,
+        27
+      ],
+      [
+        40.037634,
+        28,
+        28
+      ],
+      [
+        40.037638,
+        29,
+        29
+      ],
+      [
+        40.042047,
+        28,
+        28
+      ],
+      [
+        40.042051,
+        29,
+        29
+      ],
+      [
+        44.259739,
+        31,
+        31
+      ]
+    ],
+    "gap": [],
+    "span": [
+      [
+        0.111742,
+        1.138222,
+        12,
+        2,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        2.78014,
+        13,
+        3,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        4.232938,
+        14,
+        4,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        5.082236,
+        15,
+        5,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        5.082955,
+        16,
+        6,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        6.360245,
+        17,
+        7,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        10.768615,
+        18,
+        8,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        10.768627,
+        19,
+        9,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        10.768627,
+        20,
+        9,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        11.380778,
+        21,
+        11,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        13.227297,
+        22,
+        12,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        27.180222,
+        23,
+        13,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        27.351102,
+        24,
+        14,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        36.162746,
+        25,
+        15,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        39.223661,
+        26,
+        16,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        40.029256,
+        27,
+        17,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        40.037641,
+        28,
+        18,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        40.037641,
+        29,
+        18,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        44.259743,
+        30,
+        20,
+        "acknowledged"
+      ],
+      [
+        0.111742,
+        44.259743,
+        31,
+        20,
+        "acknowledged"
+      ]
+    ]
+  },
+  {
+    "id": "sequence-wrap",
+    "title": "4095 to 0 wraparound",
+    "summary": "A fifteen-second interval where the BA SSN advances through 4086\u20134095 and continues at 0\u201310 without a graph discontinuity.",
+    "duration": 15.0,
+    "verified": {
+      "ba": 20,
+      "bar": 0,
+      "mpdu": 27,
+      "set": 1148,
+      "hole": 132,
+      "gap": 0,
+      "span": 15
+    },
+    "ba": [
+      [
+        0.126726,
+        4086,
+        4086,
+        4150,
+        "0000ffffffffffff"
+      ],
+      [
+        0.613307,
+        4087,
+        4087,
+        4151,
+        "0080ffffffffffff"
+      ],
+      [
+        2.584065,
+        4088,
+        4088,
+        4152,
+        "00c0ffffffffffff"
+      ],
+      [
+        4.225066,
+        4089,
+        4089,
+        4153,
+        "00e0ffffffffffff"
+      ],
+      [
+        4.225075,
+        4090,
+        4090,
+        4154,
+        "00f0ffffffffffff"
+      ],
+      [
+        4.225086,
+        4091,
+        4091,
+        4155,
+        "00f8ffffffffffff"
+      ],
+      [
+        4.632069,
+        4092,
+        4092,
+        4156,
+        "00fcffffffffffff"
+      ],
+      [
+        5.492119,
+        4093,
+        4093,
+        4157,
+        "00feffffffffffff"
+      ],
+      [
+        6.474877,
+        4094,
+        4094,
+        4158,
+        "00ffffffffffffff"
+      ],
+      [
+        8.113908,
+        4095,
+        4095,
+        4159,
+        "80ffffffffffffff"
+      ],
+      [
+        10.570566,
+        0,
+        4096,
+        4160,
+        "c0ffffffffffffff"
+      ],
+      [
+        11.137107,
+        1,
+        4097,
+        4161,
+        "e0ffffffffffffff"
+      ],
+      [
+        11.141978,
+        3,
+        4099,
+        4163,
+        "f8ffffffffffffff"
+      ],
+      [
+        12.520661,
+        4,
+        4100,
+        4164,
+        "fcffffffffffffff"
+      ],
+      [
+        13.268394,
+        5,
+        4101,
+        4165,
+        "feffffffffffffff"
+      ],
+      [
+        13.642901,
+        6,
+        4102,
+        4166,
+        "ffffffffffffffff"
+      ],
+      [
+        13.918132,
+        7,
+        4103,
+        4167,
+        "ffffffffffffffff"
+      ],
+      [
+        13.918161,
+        8,
+        4104,
+        4168,
+        "ffffffffffffffff"
+      ],
+      [
+        14.2606,
+        9,
+        4105,
+        4169,
+        "ffffffffffffffff"
+      ],
+      [
+        14.870276,
+        10,
+        4106,
+        4170,
+        "ffffffffffffffff"
+      ]
+    ],
+    "bar": [],
+    "mpdu": [
+      [
+        0.126724,
+        53,
+        4149
+      ],
+      [
+        0.613304,
+        54,
+        4150
+      ],
+      [
+        2.584062,
+        55,
+        4151
+      ],
+      [
+        4.225063,
+        56,
+        4152
+      ],
+      [
+        4.225073,
+        57,
+        4153
+      ],
+      [
+        4.225083,
+        58,
+        4154
+      ],
+      [
+        4.632066,
+        59,
+        4155
+      ],
+      [
+        5.492115,
+        60,
+        4156
+      ],
+      [
+        6.474874,
+        61,
+        4157
+      ],
+      [
+        8.113905,
+        62,
+        4158
+      ],
+      [
+        10.570563,
+        63,
+        4159
+      ],
+      [
+        11.137103,
+        64,
+        4160
+      ],
+      [
+        11.141081,
+        65,
+        4161
+      ],
+      [
+        11.141084,
+        66,
+        4162
+      ],
+      [
+        11.141092,
+        65,
+        4161
+      ],
+      [
+        11.141095,
+        66,
+        4162
+      ],
+      [
+        11.14127,
+        65,
+        4161
+      ],
+      [
+        11.141275,
+        66,
+        4162
+      ],
+      [
+        11.141966,
+        65,
+        4161
+      ],
+      [
+        11.141972,
+        66,
+        4162
+      ],
+      [
+        12.520657,
+        67,
+        4163
+      ],
+      [
+        13.26839,
+        68,
+        4164
+      ],
+      [
+        13.642897,
+        69,
+        4165
+      ],
+      [
+        13.918129,
+        70,
+        4166
+      ],
+      [
+        13.918158,
+        71,
+        4167
+      ],
+      [
+        14.260597,
+        72,
+        4168
+      ],
+      [
+        14.8697,
+        73,
+        4169
+      ]
+    ],
+    "gap": [],
+    "span": [
+      [
+        0.126726,
+        2.584065,
+        4087,
+        2,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        4.225066,
+        4088,
+        3,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        4.225075,
+        4089,
+        4,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        4.225086,
+        4090,
+        5,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        4.632069,
+        4091,
+        6,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        5.492119,
+        4092,
+        7,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        6.474877,
+        4093,
+        8,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        8.113908,
+        4094,
+        9,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        10.570566,
+        4095,
+        10,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        11.137107,
+        4096,
+        11,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        11.141978,
+        4097,
+        12,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        11.141978,
+        4098,
+        12,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        12.520661,
+        4099,
+        13,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        13.268394,
+        4100,
+        14,
+        "passed by SSN"
+      ],
+      [
+        0.126726,
+        13.642901,
+        4101,
+        15,
+        "passed by SSN"
+      ]
+    ]
+  }
+]</script>
+  <script>
+  (() => {
+    'use strict';
+    const NS = 'http://www.w3.org/2000/svg';
+    const cases = JSON.parse(document.getElementById('case-data').textContent);
+    const svg = document.getElementById('plot');
+    const summary = document.getElementById('viewport-summary');
+    const detail = document.getElementById('selected-detail');
+    const scenarioCopy = document.getElementById('scenario-copy');
+    const eventTable = document.getElementById('event-table');
+    const margins = { left: 78, right: 22, top: 24, bottom: 58 };
+    const W = 1120, H = 620;
+    const pw = W - margins.left - margins.right;
+    const ph = H - margins.top - margins.bottom;
+    const layerIds = ['labels', 'deltas', 'gaps', 'mpdus', 'persistent', 'set', 'holes'];
+    const colors = {
+      blue: '#155e93', orange: '#d56b08', purple: '#7a3ea1', green: '#16833d',
+      red: '#c9362b', darkRed: '#8e1c19', gold: '#f0b429', graphite: '#53606c'
+    };
+    let current = 0;
+    let view = null;
+    let mode = 'drag';
+    let pointer = null;
+    let generated = null;
+
+    function el(name, attrs = {}, text = '') {
+      const node = document.createElementNS(NS, name);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+      if (text) node.textContent = text;
+      return node;
+    }
+    function wrap(value) { return ((Math.round(value) % 4096) + 4096) % 4096; }
+    function x(value) { return margins.left + (value - view.x0) / (view.x1 - view.x0) * pw; }
+    function y(value) { return margins.top + (view.y1 - value) / (view.y1 - view.y0) * ph; }
+    function timeAt(px) { return view.x0 + (px - margins.left) / pw * (view.x1 - view.x0); }
+    function seqAt(py) { return view.y1 - (py - margins.top) / ph * (view.y1 - view.y0); }
+    function inView(t, seq) { return t >= view.x0 && t <= view.x1 && seq >= view.y0 && seq <= view.y1; }
+    function duration(value) {
+      const sign = value < 0 ? '−' : '';
+      const magnitude = Math.abs(value);
+      if (magnitude < 0.001) return `${sign}${(magnitude * 1e6).toFixed(1)} µs`;
+      if (magnitude < 1) return `${sign}${(magnitude * 1e3).toFixed(magnitude < .1 ? 2 : 1)} ms`;
+      return `${sign}${magnitude.toFixed(magnitude < 10 ? 3 : 2)} s`;
+    }
+    function bitmapPoints(sample) {
+      const [t, , u, , hex] = sample;
+      const bytes = hex.match(/../g)?.map(part => Number.parseInt(part, 16)) || [];
+      const bits = [];
+      let highest = -1;
+      for (let pos = bytes.length * 8 - 1; pos >= 0; pos--) {
+        if (bytes[Math.floor(pos / 8)] & (1 << (pos % 8))) { highest = pos; break; }
+      }
+      for (let pos = 0; pos <= highest; pos++) {
+        bits.push({ t, seq: u + pos, set: Boolean(bytes[Math.floor(pos / 8)] & (1 << (pos % 8))), source: sample });
+      }
+      return bits;
+    }
+    function generate(caseData) {
+      const bitmap = caseData.ba.flatMap(bitmapPoints);
+      const sets = bitmap.filter(point => point.set);
+      const holes = bitmap.filter(point => !point.set);
+      return { sets, holes };
+    }
+    function allY(caseData) {
+      const values = [];
+      caseData.ba.forEach(item => values.push(item[2], item[3]));
+      caseData.bar.forEach(item => values.push(item[2]));
+      caseData.mpdu.forEach(item => values.push(item[2]));
+      caseData.gap.forEach(item => values.push(item[1]));
+      caseData.span.forEach(item => values.push(item[2]));
+      generated.sets.forEach(item => values.push(item.seq));
+      generated.holes.forEach(item => values.push(item.seq));
+      return values;
+    }
+    function resetView() {
+      const c = cases[current];
+      const ys = allY(c);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const yPad = Math.max(2, (maxY - minY) * .05);
+      const y0 = minY >= 0 && maxY < 4096 ? Math.max(0, minY - yPad) : minY - yPad;
+      view = { x0: 0, x1: c.duration, y0, y1: maxY + yPad };
+      render();
+    }
+    function layer(name) { return document.getElementById(`layer-${name}`).checked; }
+    function drawGrid(root) {
+      root.append(el('rect', { x: margins.left, y: margins.top, width: pw, height: ph, fill: '#fff', stroke: '#8c99a5' }));
+      for (let i = 0; i <= 5; i++) {
+        const px = margins.left + pw * i / 5;
+        const value = view.x0 + (view.x1 - view.x0) * i / 5;
+        root.append(el('line', { x1: px, y1: margins.top, x2: px, y2: margins.top + ph, stroke: '#e1e6ea' }));
+        root.append(el('text', { x: px, y: H - 28, 'text-anchor': 'middle', fill: '#44515c', 'font-size': 13 }, duration(value)));
+      }
+      for (let i = 0; i <= 6; i++) {
+        const py = margins.top + ph * i / 6;
+        const value = view.y1 - (view.y1 - view.y0) * i / 6;
+        root.append(el('line', { x1: margins.left, y1: py, x2: margins.left + pw, y2: py, stroke: '#e1e6ea' }));
+        root.append(el('text', { x: margins.left - 10, y: py + 4, 'text-anchor': 'end', fill: '#44515c', 'font-size': 13 }, wrap(value)));
+      }
+      root.append(el('text', { x: margins.left + pw / 2, y: H - 5, 'text-anchor': 'middle', fill: '#24313b', 'font-size': 14 }, 'Time from excerpt start'));
+      root.append(el('text', { x: 18, y: margins.top + ph / 2, transform: `rotate(-90 18 ${margins.top + ph / 2})`, 'text-anchor': 'middle', fill: '#24313b', 'font-size': 14 }, 'Sequence number (labels modulo 4096)'));
+    }
+    function stepPath(items, valueIndex) {
+      if (!items.length) return '';
+      let path = `M ${x(items[0][0])} ${y(items[0][valueIndex])}`;
+      for (let i = 1; i < items.length; i++) path += ` H ${x(items[i][0])} V ${y(items[i][valueIndex])}`;
+      return path;
+    }
+    function selectEvent(description) { detail.textContent = description; }
+    function interactive(node, description) {
+      node.setAttribute('tabindex', '-1');
+      node.style.cursor = 'pointer';
+      node.addEventListener('pointerdown', event => event.stopPropagation());
+      node.addEventListener('click', event => { event.stopPropagation(); selectEvent(description); });
+      return node;
+    }
+    function drawCore(root, c) {
+      root.append(el('path', { d: stepPath(c.ba, 2), fill: 'none', stroke: colors.blue, 'stroke-width': 2.2, 'vector-effect': 'non-scaling-stroke' }));
+      root.append(el('path', { d: stepPath(c.ba, 3), fill: 'none', stroke: colors.orange, 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }));
+      c.ba.forEach((item, index) => {
+        if (!inView(item[0], item[2])) return;
+        const [t, ssn, u, upper, bitmap] = item;
+        const setCount = bitmap.match(/../g).reduce((sum, byte) => sum + Number.parseInt(byte, 16).toString(2).replaceAll('0', '').length, 0);
+        const point = el('circle', { cx: x(t), cy: y(u), r: 4.5, fill: '#fff', stroke: colors.blue, 'stroke-width': 2 });
+        interactive(point, `BA ${index + 1}: ${duration(t)} · SSN ${ssn} · unwrapped ${u} · upper bound ${upper} · ${setCount} set bit${setCount === 1 ? '' : 's'}.`);
+        root.append(point);
+        root.append(el('circle', { cx: x(t), cy: y(upper), r: 2.8, fill: colors.orange }));
+        if (layer('labels')) root.append(el('text', { x: x(t), y: y(u) + 16, 'text-anchor': 'middle', fill: colors.blue, 'font-size': 11 }, ssn));
+        if (layer('deltas') && index > 0) {
+          const delta = t - c.ba[index - 1][0];
+          root.append(el('text', { x: (x(t) + x(c.ba[index - 1][0])) / 2, y: y(u) - 9, 'text-anchor': 'middle', fill: '#34434f', 'font-size': 10 }, `Δt ${duration(delta)}`));
+        }
+      });
+      c.bar.forEach((item, index) => {
+        if (!inView(item[0], item[2])) return;
+        const px = x(item[0]), py = y(item[2]);
+        const point = el('path', { d: `M ${px} ${py - 6} L ${px - 6} ${py + 5} L ${px + 6} ${py + 5} Z`, fill: '#fff', stroke: colors.purple, 'stroke-width': 2 });
+        interactive(point, `BAR ${index + 1}: ${duration(item[0])} · starting sequence ${item[1]} · unwrapped ${item[2]}.`);
+        root.append(point);
+      });
+    }
+    function drawOverlays(root, c) {
+      if (layer('set')) generated.sets.forEach((item, index) => {
+        if (!inView(item.t, item.seq)) return;
+        const point = el('circle', { cx: x(item.t), cy: y(item.seq), r: 2.5, fill: colors.green });
+        interactive(point, `Bitmap-set position ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · unwrapped ${item.seq}.`);
+        root.append(point);
+      });
+      if (layer('holes')) generated.holes.forEach((item, index) => {
+        if (!inView(item.t, item.seq)) return;
+        const px = x(item.t), py = y(item.seq);
+        const group = el('g', { stroke: colors.red, 'stroke-width': 1.7 });
+        group.append(el('line', { x1: px - 3, y1: py - 3, x2: px + 3, y2: py + 3 }));
+        group.append(el('line', { x1: px + 3, y1: py - 3, x2: px - 3, y2: py + 3 }));
+        interactive(group, `Bitmap hole ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · not acknowledged in this BA.`);
+        root.append(group);
+      });
+      if (layer('gaps')) c.gap.forEach((item, index) => {
+        if (!inView(item[0], item[1])) return;
+        const point = el('circle', { cx: x(item[0]), cy: y(item[1]), r: 3.2, fill: colors.graphite, stroke: '#aab3bb' });
+        interactive(point, `BA ACK-gap position ${index + 1}: ${duration(item[0])} · sequence ${wrap(item[1])}. No BA acknowledgment was observed before SSN advance.`);
+        root.append(point);
+      });
+      if (layer('mpdus')) c.mpdu.forEach((item, index) => {
+        if (!inView(item[0], item[2])) return;
+        const px = x(item[0]), py = y(item[2]);
+        const point = el('path', { d: `M ${px} ${py - 5} L ${px + 5} ${py} L ${px} ${py + 5} L ${px - 5} ${py} Z`, fill: colors.gold, stroke: '#604d13', 'stroke-width': 1.6 });
+        interactive(point, `Captured MPDU ${index + 1}: ${duration(item[0])} · sequence ${item[1]} · unwrapped ${item[2]}. Capture presence does not prove reception.`);
+        root.append(point);
+      });
+      if (layer('persistent')) c.span.forEach((item, index) => {
+        const [t0, t1, seq, count, outcome] = item;
+        if (t0 > view.x1 || t1 < view.x0 || seq < view.y0 || seq > view.y1) return;
+        const x0 = x(Math.max(t0, view.x0)), x1 = x(Math.min(t1, view.x1)), py = y(seq);
+        root.append(el('line', { x1: x0, y1: py, x2: x1, y2: py, stroke: colors.darkRed, 'stroke-width': 2 }));
+        const endpoint = el('rect', { x: x(t1) - 4, y: py - 4, width: 8, height: 8, fill: colors.darkRed, stroke: '#fff' });
+        interactive(endpoint, `Persistent hole ${index + 1}: sequence ${wrap(seq)} · ${count} covering BAs · ${duration(t1 - t0)} · outcome: ${outcome}.`);
+        root.append(endpoint);
+      });
+    }
+    function counts(c) {
+      return {
+        ba: c.ba.filter(item => inView(item[0], item[2])).length,
+        bar: c.bar.filter(item => inView(item[0], item[2])).length,
+        mpdu: c.mpdu.filter(item => inView(item[0], item[2])).length,
+        set: generated.sets.filter(item => inView(item.t, item.seq)).length,
+        hole: generated.holes.filter(item => inView(item.t, item.seq)).length,
+        span: c.span.filter(item => item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1).length,
+        gap: c.gap.filter(item => inView(item[0], item[1])).length
+      };
+    }
+    function updateSummary(c) {
+      const n = counts(c);
+      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots.`;
+    }
+    function updateTable(c) {
+      const events = [];
+      c.ba.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BA', item[0], wrap(item[2]), `BA ${i + 1}; upper ${wrap(item[3])}`]); });
+      c.bar.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BAR', item[0], wrap(item[2]), `BAR ${i + 1}`]); });
+      c.mpdu.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['MPDU', item[0], wrap(item[2]), `MPDU ${i + 1}`]); });
+      c.span.forEach((item, i) => { if (item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1) events.push(['Persistent hole', item[1], wrap(item[2]), `${item[3]} BAs; ${item[4]}`]); });
+      events.sort((a, b) => a[1] - b[1]);
+      eventTable.replaceChildren();
+      events.slice(0, 100).forEach(item => {
+        const row = document.createElement('tr');
+        item.forEach((value, index) => {
+          const cell = document.createElement('td');
+          cell.textContent = index === 1 ? duration(value) : String(value);
+          row.append(cell);
+        });
+        eventTable.append(row);
+      });
+      if (events.length > 100) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.textContent = `${events.length - 100} additional in-view events omitted from this compact table.`;
+        row.append(cell); eventTable.append(row);
+      }
+    }
+    function render() {
+      const c = cases[current];
+      const title = svg.querySelector('title');
+      const desc = svg.querySelector('desc');
+      svg.replaceChildren(title, desc);
+      const root = el('g');
+      svg.append(root);
+      drawGrid(root);
+      const clip = el('clipPath', { id: 'plot-clip' });
+      clip.append(el('rect', { x: margins.left, y: margins.top, width: pw, height: ph }));
+      const defs = el('defs'); defs.append(clip); root.append(defs);
+      const marks = el('g', { 'clip-path': 'url(#plot-clip)' }); root.append(marks);
+      drawCore(marks, c);
+      drawOverlays(marks, c);
+      updateSummary(c);
+      updateTable(c);
+    }
+    function setPreset(index) {
+      current = index;
+      const c = cases[current];
+      generated = generate(c);
+      scenarioCopy.textContent = c.summary;
+      document.querySelectorAll('[data-scenario]').forEach((button, i) => button.setAttribute('aria-pressed', i === index ? 'true' : 'false'));
+      const presetLayers = index === 0
+        ? { labels: true, deltas: true, gaps: false, mpdus: true, persistent: false, set: true, holes: false }
+        : index === 1
+          ? { labels: false, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true }
+          : { labels: true, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true };
+      for (const [name, checked] of Object.entries(presetLayers)) document.getElementById(`layer-${name}`).checked = checked;
+      detail.textContent = 'Select a plotted marker for details. Scenario data is sanitized and time-normalized.';
+      resetView();
+    }
+    function zoomAxis(axis, factor, center = null) {
+      const lo = view[`${axis}0`], hi = view[`${axis}1`];
+      const mid = center ?? (lo + hi) / 2;
+      view[`${axis}0`] = mid + (lo - mid) * factor;
+      view[`${axis}1`] = mid + (hi - mid) * factor;
+      render();
+    }
+    function localPoint(event) {
+      const rect = svg.getBoundingClientRect();
+      return { x: (event.clientX - rect.left) * W / rect.width, y: (event.clientY - rect.top) * H / rect.height };
+    }
+    function inside(point) { return point.x >= margins.left && point.x <= margins.left + pw && point.y >= margins.top && point.y <= margins.top + ph; }
+
+    const scenarioButtons = document.getElementById('scenario-buttons');
+    cases.forEach((item, index) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.scenario = item.id; button.textContent = item.title;
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', () => setPreset(index));
+      scenarioButtons.append(button);
+    });
+    layerIds.forEach(name => document.getElementById(`layer-${name}`).addEventListener('change', render));
+    document.querySelectorAll('input[name="mouse-mode"]').forEach(input => input.addEventListener('change', () => { mode = input.value; svg.style.cursor = mode === 'zoom' ? 'crosshair' : 'grab'; }));
+    document.getElementById('reset').addEventListener('click', resetView);
+    document.getElementById('x-in').addEventListener('click', () => zoomAxis('x', .75));
+    document.getElementById('x-out').addEventListener('click', () => zoomAxis('x', 1.35));
+    document.getElementById('y-in').addEventListener('click', () => zoomAxis('y', .75));
+    document.getElementById('y-out').addEventListener('click', () => zoomAxis('y', 1.35));
+
+    svg.addEventListener('pointerdown', event => {
+      const p = localPoint(event); if (!inside(p)) return;
+      svg.setPointerCapture(event.pointerId);
+      pointer = { start: p, last: p, original: { ...view }, moved: false };
+      svg.style.cursor = mode === 'zoom' ? 'crosshair' : 'grabbing';
+      if (mode === 'zoom') {
+        pointer.band = el('rect', { x: p.x, y: p.y, width: 0, height: 0, fill: '#1683b640', stroke: '#086994', 'stroke-width': 1.5, 'stroke-dasharray': '5 3' });
+        svg.append(pointer.band);
+      }
+    });
+    svg.addEventListener('pointermove', event => {
+      if (!pointer) return;
+      const p = localPoint(event); pointer.last = p;
+      pointer.moved ||= Math.hypot(p.x - pointer.start.x, p.y - pointer.start.y) > 4;
+      if (mode === 'zoom') {
+        pointer.band.setAttribute('x', Math.min(pointer.start.x, p.x));
+        pointer.band.setAttribute('y', Math.min(pointer.start.y, p.y));
+        pointer.band.setAttribute('width', Math.abs(p.x - pointer.start.x));
+        pointer.band.setAttribute('height', Math.abs(p.y - pointer.start.y));
+      } else if (pointer.moved) {
+        const dx = (p.x - pointer.start.x) / pw * (pointer.original.x1 - pointer.original.x0);
+        const dy = (p.y - pointer.start.y) / ph * (pointer.original.y1 - pointer.original.y0);
+        view = { x0: pointer.original.x0 - dx, x1: pointer.original.x1 - dx, y0: pointer.original.y0 + dy, y1: pointer.original.y1 + dy };
+        render();
+      }
+    });
+    function endPointer(event) {
+      if (!pointer) return;
+      if (mode === 'zoom' && pointer.moved) {
+        const a = pointer.start, b = pointer.last;
+        if (Math.abs(a.x - b.x) >= 12 && Math.abs(a.y - b.y) >= 12) {
+          const x0 = timeAt(Math.max(margins.left, Math.min(a.x, b.x)));
+          const x1 = timeAt(Math.min(margins.left + pw, Math.max(a.x, b.x)));
+          const y0 = seqAt(Math.min(margins.top + ph, Math.max(a.y, b.y)));
+          const y1 = seqAt(Math.max(margins.top, Math.min(a.y, b.y)));
+          view = { x0, x1, y0, y1 };
+        }
+        render();
+      }
+      pointer = null;
+      svg.style.cursor = mode === 'zoom' ? 'crosshair' : 'grab';
+      if (event && svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+    }
+    svg.addEventListener('pointerup', endPointer);
+    svg.addEventListener('pointercancel', endPointer);
+    svg.addEventListener('wheel', event => {
+      event.preventDefault();
+      const p = localPoint(event); if (!inside(p)) return;
+      const factor = event.deltaY < 0 ? .82 : 1.22;
+      zoomAxis('x', factor, timeAt(p.x));
+      zoomAxis('y', factor, seqAt(p.y));
+    }, { passive: false });
+    svg.addEventListener('keydown', event => {
+      if (event.key.toLowerCase() === 'z') {
+        mode = mode === 'drag' ? 'zoom' : 'drag';
+        document.querySelector(`input[name="mouse-mode"][value="${mode}"]`).checked = true;
+        svg.style.cursor = mode === 'zoom' ? 'crosshair' : 'grab';
+      } else if (event.key.toLowerCase() === 'x') zoomAxis('x', event.shiftKey ? 1.35 : .75);
+      else if (event.key.toLowerCase() === 'y') zoomAxis('y', event.shiftKey ? 1.35 : .75);
+      else if (event.key === 'Home') resetView();
+      else return;
+      event.preventDefault();
+    });
+
+    setPreset(0);
+  })();
+  </script>
+</body>
+</html>
