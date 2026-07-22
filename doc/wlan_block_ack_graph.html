@@ -23,6 +23,7 @@
       --dark-red: #8e1c19;
       --gold: #f0b429;
       --graphite: #53606c;
+      --gray: #686c69;
       --shadow: 0 12px 30px rgb(22 39 55 / 10%);
     }
     * { box-sizing: border-box; }
@@ -245,6 +246,7 @@
             <div class="legend-grid" aria-label="Graph legend">
               <span class="key" style="color:var(--blue)"><span class="swatch"></span>BA starting sequence</span>
               <span class="key" style="color:var(--orange)"><span class="swatch"></span>BA window upper bound</span>
+              <span class="key" style="color:var(--gray)"><span class="swatch"></span>BA with explicit FCS error</span>
               <span class="key" style="color:var(--purple)"><span class="swatch"></span>BAR triangle</span>
               <span class="key" style="color:var(--green)"><span class="swatch"></span>Bitmap-set dot</span>
               <span class="key" style="color:var(--green)"><span class="swatch"></span>Prior-set zero cross</span>
@@ -289,6 +291,10 @@
           <p>The blue step trace is the BA SSN. The orange trace is the exclusive receive-window upper bound: unwrapped SSN plus the number of bitmap sequence positions. Green dots are set positions. Clear <strong>Show bitmap set</strong> when dense green evidence hides the core traces; the analysis and summary counts remain unchanged. See the normal and holes screenshots.</p>
         </article>
         <article class="feature">
+          <h3>Explicit FCS errors</h3>
+          <p>When Radiotap explicitly flags a bad FCS or Wireshark calculates a bad WLAN FCS, the affected BA marker, window marker, bitmap dots or crosses, and SSN label are gray. Blue and orange step lines retain their session colors because each segment spans more than one sample. Missing, unchecked, or unavailable FCS status is not treated as an error. The BA remains in the analysis, and its detail text and the viewport summary report the condition. Select <strong>Bad-FCS BA bitmap</strong> in the interactive graph to see two real bad-FCS BAs.</p>
+        </article>
+        <article class="feature">
           <h3>SSN and BA timing labels</h3>
           <p><strong>Show SSN labels</strong> adds wrapped 12-bit values below the BA points. <strong>Show BA time deltas</strong> adds elapsed time from the previous BA above each blue segment. Labels annotate the graph only. The normal screenshot shows both.</p>
         </article>
@@ -298,7 +304,7 @@
         </article>
         <article class="feature">
           <h3>Bitmap holes and persistent aging</h3>
-          <p>Crosses are zero positions before the highest set position in one BA; trailing zeros are not plotted. A green cross means an earlier BA explicitly set that sequence in the same agreement. A red cross means the graph has no earlier observed set-bit evidence for it. Successful ADDBA responses, DELBA frames, and inferred analysis-epoch resets clear that history. Neither color proves transmission or loss. A dark-red span means a red position remained zero across at least two consecutive covering BAs. Its square endpoint reports age and outcome. Select <strong>Prior-set zero crosses</strong> in the interactive graph to compare both cross colors; the holes screenshot shows the red and persistent layers.</p>
+          <p>Crosses are zero positions before the highest set position in one BA; trailing zeros are not plotted. A green cross means an earlier BA explicitly set that sequence in the same agreement. A red cross means the graph has no earlier observed set-bit evidence for it. Successful ADDBA responses, DELBA frames, and inferred analysis-epoch resets clear that history. Neither color proves transmission or loss. An explicit bad-FCS overlay takes precedence and turns either kind of cross gray, while the summary retains the underlying classification. A dark-red span means a red position remained zero across at least two consecutive covering BAs. Its square endpoint reports age and outcome. The holes screenshot shows the red and persistent layers.</p>
         </article>
         <article class="feature">
           <h3>No BA ACK before SSN advance</h3>
@@ -331,8 +337,9 @@
             <tr><td>BA ACK gaps</td><td>Off</td><td>Adds gray no-observed-BA-ACK-before-advance positions.</td></tr>
             <tr><td>Captured MPDUs</td><td>Off</td><td>Adds gold reverse-direction QoS Data diamonds.</td></tr>
             <tr><td>Persistent-hole aging</td><td>Off</td><td>Adds dark-red lifetimes and selectable endpoints.</td></tr>
-            <tr><td>Bitmap set</td><td>On</td><td>Shows or hides green set-position dots only.</td></tr>
-            <tr><td>Bitmap holes</td><td>Off</td><td>Adds green crosses for zeros set by an earlier BA in the agreement and red crosses for zeros without prior set evidence.</td></tr>
+            <tr><td>Bitmap set</td><td>On</td><td>Shows or hides set-position dots: normally green, gray for an explicit FCS-error BA.</td></tr>
+            <tr><td>Bitmap holes</td><td>Off</td><td>Adds green prior-set crosses and red no-prior-set crosses; either is gray for an explicit FCS-error BA.</td></tr>
+            <tr><td>Explicit FCS-error BA</td><td>Automatic</td><td>Overlays that BA's direct markers and SSN label in gray; unknown FCS status keeps normal colors.</td></tr>
             <tr><td>Viewport summary</td><td>Automatic</td><td>Tracks duration and all underlying in-range counts, even for hidden optional layers.</td></tr>
           </tbody>
         </table>
@@ -363,6 +370,7 @@
             <tr><td>Verified</td><td>BA pair ranking</td><td>The supplied capture sorts the 1,171-BA pair before the reverse 1,046-BA pair; the latter total equals 1,042 BAs on TID 0 plus 4 on TID 7.</td></tr>
             <tr><td>Verified</td><td>TID ranking</td><td>A second real-capture pair sorts TID 6 with 2 BAs before TID 0 with 1 BA, reversing numeric TID order as required.</td></tr>
             <tr><td>Verified</td><td>Prior-set zero classification</td><td>In the reported 21-BA viewport, the original 171 red zeros split into 48 green prior-set zeros and 123 red zeros. Frame 29438 alone splits 39 zeros into 13 green and 26 red.</td></tr>
+            <tr><td>Verified</td><td>Explicit FCS-error classification</td><td>The same viewport has four bad-FCS BAs—frames 29412, 29438, 29771, and 29815—and 17 good-FCS BAs. Both <code>radiotap.flags.badfcs</code> and <code>wlan.fcs.status</code> identify the four gray samples.</td></tr>
             <tr><td>Verified</td><td>Agreement-boundary retry handling</td><td>A second real capture contains 96 successful ADDBA responses and 112 DELBA frames including retries. Retry-aware signatures retain 61 and 59 boundaries respectively, including the first observed retry when its original frame is absent.</td></tr>
             <tr><td>Verified</td><td><code>cmake --build build --target wireshark -j4</code></td><td>Development Wireshark application compiled and linked with the graph changes.</td></tr>
             <tr><td>Verified</td><td><code>cmake --build build --target checkAPI_ui-qt -j4</code></td><td>Qt API-policy target passed; unrelated pre-existing notices did not fail the target.</td></tr>
@@ -2694,8 +2702,8 @@
   },
   {
     "id": "prior-set-zeros",
-    "title": "Prior-set zero crosses",
-    "summary": "Two compressed TID 0 BAs, source frames 29412 and 29438: 13 sequences set by the first bitmap are zero 40.884 ms later. Both source frames failed FCS, so this example demonstrates prior-set classification, not trustworthy acknowledgment or loss evidence.",
+    "title": "Bad-FCS BA bitmap",
+    "summary": "Two compressed TID 0 BAs, source frames 29412 and 29438: 13 sequences set by the first bitmap are zero 40.884 ms later. Both source frames failed FCS, so their direct evidence is gray while the summary retains the underlying prior-set classification; neither acknowledgment nor loss is trustworthy here.",
     "duration": 0.08,
     "verified": {
       "ba": 2,
@@ -2704,6 +2712,7 @@
       "set": 25,
       "hole": 45,
       "prior": 13,
+      "badFcs": 2,
       "gap": 0,
       "span": 0
     },
@@ -2713,14 +2722,16 @@
         1847,
         1847,
         1911,
-        "a1628e2c01000000"
+        "a1628e2c01000000",
+        true
       ],
       [
         0.059371,
         1850,
         1850,
         1914,
-        "010000401b590200"
+        "010000401b590200",
+        true
       ]
     ],
     "bar": [],
@@ -2746,7 +2757,8 @@
     const layerIds = ['labels', 'deltas', 'gaps', 'mpdus', 'persistent', 'set', 'holes'];
     const colors = {
       blue: '#155e93', orange: '#d56b08', purple: '#7a3ea1', green: '#16833d',
-      red: '#c9362b', darkRed: '#8e1c19', gold: '#f0b429', graphite: '#53606c'
+      red: '#c9362b', darkRed: '#8e1c19', gold: '#f0b429', graphite: '#53606c',
+      gray: '#686c69', grayFill: '#babdb6'
     };
     let current = 0;
     let view = null;
@@ -2774,7 +2786,7 @@
       return `${sign}${magnitude.toFixed(magnitude < 10 ? 3 : 2)} s`;
     }
     function bitmapPoints(sample) {
-      const [t, , u, , hex] = sample;
+      const [t, , u, , hex, badFcs = false] = sample;
       const bytes = hex.match(/../g)?.map(part => Number.parseInt(part, 16)) || [];
       const bits = [];
       let highest = -1;
@@ -2782,7 +2794,7 @@
         if (bytes[Math.floor(pos / 8)] & (1 << (pos % 8))) { highest = pos; break; }
       }
       for (let pos = 0; pos <= highest; pos++) {
-        bits.push({ t, seq: u + pos, set: Boolean(bytes[Math.floor(pos / 8)] & (1 << (pos % 8))), source: sample });
+        bits.push({ t, seq: u + pos, set: Boolean(bytes[Math.floor(pos / 8)] & (1 << (pos % 8))), badFcs, source: sample });
       }
       return bits;
     }
@@ -2856,13 +2868,14 @@
       root.append(el('path', { d: stepPath(c.ba, 3), fill: 'none', stroke: colors.orange, 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }));
       c.ba.forEach((item, index) => {
         if (!inView(item[0], item[2])) return;
-        const [t, ssn, u, upper, bitmap] = item;
+        const [t, ssn, u, upper, bitmap, badFcs = false] = item;
         const setCount = bitmap.match(/../g).reduce((sum, byte) => sum + Number.parseInt(byte, 16).toString(2).replaceAll('0', '').length, 0);
-        const point = el('circle', { cx: x(t), cy: y(u), r: 4.5, fill: '#fff', stroke: colors.blue, 'stroke-width': 2 });
-        interactive(point, `BA ${index + 1}: ${duration(t)} · SSN ${ssn} · unwrapped ${u} · upper bound ${upper} · ${setCount} set bit${setCount === 1 ? '' : 's'}.`);
+        const point = el('circle', { cx: x(t), cy: y(u), r: badFcs ? 5.2 : 4.5, fill: badFcs ? colors.grayFill : '#fff', stroke: badFcs ? colors.gray : colors.blue, 'stroke-width': 2 });
+        const fcsDetail = badFcs ? ' · explicit FCS error; plotted gray' : '';
+        interactive(point, `BA ${index + 1}: ${duration(t)} · SSN ${ssn} · unwrapped ${u} · upper bound ${upper} · ${setCount} set bit${setCount === 1 ? '' : 's'}${fcsDetail}.`);
         root.append(point);
-        root.append(el('circle', { cx: x(t), cy: y(upper), r: 2.8, fill: colors.orange }));
-        if (layer('labels')) root.append(el('text', { x: x(t), y: y(u) + 16, 'text-anchor': 'middle', fill: colors.blue, 'font-size': 11 }, ssn));
+        root.append(el('circle', { cx: x(t), cy: y(upper), r: badFcs ? 3.5 : 2.8, fill: badFcs ? colors.gray : colors.orange }));
+        if (layer('labels')) root.append(el('text', { x: x(t), y: y(u) + 16, 'text-anchor': 'middle', fill: badFcs ? colors.gray : colors.blue, 'font-size': 11 }, ssn));
         if (layer('deltas') && index > 0) {
           const delta = t - c.ba[index - 1][0];
           root.append(el('text', { x: (x(t) + x(c.ba[index - 1][0])) / 2, y: y(u) - 9, 'text-anchor': 'middle', fill: '#34434f', 'font-size': 10 }, `Δt ${duration(delta)}`));
@@ -2879,26 +2892,28 @@
     function drawOverlays(root, c) {
       if (layer('set')) generated.sets.forEach((item, index) => {
         if (!inView(item.t, item.seq)) return;
-        const point = el('circle', { cx: x(item.t), cy: y(item.seq), r: 2.5, fill: colors.green });
-        interactive(point, `Bitmap-set position ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · unwrapped ${item.seq}.`);
+        const point = el('circle', { cx: x(item.t), cy: y(item.seq), r: item.badFcs ? 3.1 : 2.5, fill: item.badFcs ? colors.gray : colors.green });
+        interactive(point, `Bitmap-set position ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · unwrapped ${item.seq}${item.badFcs ? ' · explicit FCS error; plotted gray' : ''}.`);
         root.append(point);
       });
       if (layer('holes')) generated.priorSetZeros.forEach((item, index) => {
         if (!inView(item.t, item.seq)) return;
         const px = x(item.t), py = y(item.seq);
-        const group = el('g', { stroke: colors.green, 'stroke-width': 1.7 });
-        group.append(el('line', { x1: px - 3, y1: py - 3, x2: px + 3, y2: py + 3 }));
-        group.append(el('line', { x1: px + 3, y1: py - 3, x2: px - 3, y2: py + 3 }));
-        interactive(group, `Prior-set zero ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · set by an earlier BA in this agreement, zero in this BA.`);
+        const radius = item.badFcs ? 4 : 3;
+        const group = el('g', { stroke: item.badFcs ? colors.gray : colors.green, 'stroke-width': item.badFcs ? 2 : 1.7 });
+        group.append(el('line', { x1: px - radius, y1: py - radius, x2: px + radius, y2: py + radius }));
+        group.append(el('line', { x1: px + radius, y1: py - radius, x2: px - radius, y2: py + radius }));
+        interactive(group, `Prior-set zero ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · set by an earlier BA in this agreement, zero in this BA${item.badFcs ? ' · explicit FCS error; plotted gray' : ''}.`);
         root.append(group);
       });
       if (layer('holes')) generated.holes.forEach((item, index) => {
         if (!inView(item.t, item.seq)) return;
         const px = x(item.t), py = y(item.seq);
-        const group = el('g', { stroke: colors.red, 'stroke-width': 1.7 });
-        group.append(el('line', { x1: px - 3, y1: py - 3, x2: px + 3, y2: py + 3 }));
-        group.append(el('line', { x1: px + 3, y1: py - 3, x2: px - 3, y2: py + 3 }));
-        interactive(group, `Bitmap hole ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · zero in this BA with no earlier set-bit evidence in this agreement.`);
+        const radius = item.badFcs ? 4 : 3;
+        const group = el('g', { stroke: item.badFcs ? colors.gray : colors.red, 'stroke-width': item.badFcs ? 2 : 1.7 });
+        group.append(el('line', { x1: px - radius, y1: py - radius, x2: px + radius, y2: py + radius }));
+        group.append(el('line', { x1: px + radius, y1: py - radius, x2: px - radius, y2: py + radius }));
+        interactive(group, `Bitmap hole ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · zero in this BA with no earlier set-bit evidence in this agreement${item.badFcs ? ' · explicit FCS error; plotted gray' : ''}.`);
         root.append(group);
       });
       if (layer('gaps')) c.gap.forEach((item, index) => {
@@ -2932,17 +2947,18 @@
         set: generated.sets.filter(item => inView(item.t, item.seq)).length,
         prior: generated.priorSetZeros.filter(item => inView(item.t, item.seq)).length,
         hole: generated.holes.filter(item => inView(item.t, item.seq)).length,
+        badFcs: c.ba.filter(item => item[5] && inView(item[0], item[2])).length,
         span: c.span.filter(item => item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1).length,
         gap: c.gap.filter(item => inView(item[0], item[1])).length
       };
     }
     function updateSummary(c) {
       const n = counts(c);
-      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots.`;
+      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots · ${n.badFcs} explicit-FCS-error BAs.`;
     }
     function updateTable(c) {
       const events = [];
-      c.ba.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BA', item[0], wrap(item[2]), `BA ${i + 1}; upper ${wrap(item[3])}`]); });
+      c.ba.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BA', item[0], wrap(item[2]), `BA ${i + 1}; upper ${wrap(item[3])}${item[5] ? '; explicit FCS error; plotted gray' : ''}`]); });
       c.bar.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BAR', item[0], wrap(item[2]), `BAR ${i + 1}`]); });
       c.mpdu.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['MPDU', item[0], wrap(item[2]), `MPDU ${i + 1}`]); });
       c.span.forEach((item, i) => { if (item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1) events.push(['Persistent hole', item[1], wrap(item[2]), `${item[3]} BAs; ${item[4]}`]); });

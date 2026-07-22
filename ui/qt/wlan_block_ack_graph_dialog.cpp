@@ -136,6 +136,7 @@ struct BaSample {
     uint32_t frame_number = 0;
     double relative_time = 0.0;
     bool is_request = false;
+    bool explicit_fcs_error = false;
     uint32_t type = 0;
     uint32_t tid = 0;
     uint32_t starting_sequence = 0;
@@ -427,6 +428,8 @@ public:
         hf_retry(fieldIdsByName("wlan.fc.retry")),
         hf_dialog_token(fieldIdsByName("wlan.fixed.dialog_token")),
         hf_reason_code(fieldIdsByName("wlan.fixed.reason_code")),
+        hf_fcs_status(fieldIdsByName("wlan.fcs.status")),
+        hf_radiotap_bad_fcs(fieldIdsByName("radiotap.flags.badfcs")),
         hf_qos_tid(fieldIdsByName("wlan.qos.tid")),
         hf_mpdu_sequence(fieldIdsByName("wlan.seq")),
         hf_ta(fieldIdsByName("wlan.ta")),
@@ -449,6 +452,8 @@ public:
     FieldIds hf_retry;
     FieldIds hf_dialog_token;
     FieldIds hf_reason_code;
+    FieldIds hf_fcs_status;
+    FieldIds hf_radiotap_bad_fcs;
     FieldIds hf_qos_tid;
     FieldIds hf_mpdu_sequence;
     FieldIds hf_ta;
@@ -468,6 +473,9 @@ public:
     QVector<int> set_anchor_indexes;
     QVector<int> previously_set_zero_anchor_indexes;
     QVector<int> hole_anchor_indexes;
+    QVector<int> bad_fcs_anchor_indexes;
+    QVector<int> bad_fcs_set_anchor_indexes;
+    QVector<int> bad_fcs_zero_anchor_indexes;
     QVector<PersistentHoleSpan> persistent_hole_spans;
     QVector<QCPItemText *> ssn_labels;
     QVector<QCPItemText *> time_delta_labels;
@@ -496,6 +504,10 @@ public:
     QCPGraph *persistent_hole_graph = nullptr;
     QCPErrorBars *persistent_hole_error_bars = nullptr;
     QCPGraph *advance_span_graph = nullptr;
+    QCPGraph *bad_fcs_anchor_graph = nullptr;
+    QCPGraph *bad_fcs_window_upper_graph = nullptr;
+    QCPGraph *bad_fcs_set_graph = nullptr;
+    QCPGraph *bad_fcs_zero_graph = nullptr;
     QCPGraph *mpdu_graph = nullptr;
     QRubberBand *zoom_rubber_band = nullptr;
     QPoint zoom_origin;
@@ -589,15 +601,16 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_bitmap_set->setObjectName(QStringLiteral("showBitmapSetCheckBox"));
     d_->show_bitmap_set->setChecked(true);
     d_->show_bitmap_set->setToolTip(
-                tr("Show green dots for set positions in each Block Ack bitmap."));
+                tr("Show dots for set positions in each Block Ack bitmap. They are normally "
+                   "green and gray for a BA with an explicit FCS error."));
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(false);
     d_->show_holes->setToolTip(
                 tr("Show zero bitmap positions before the highest set position. Green "
                    "crosses were set by an earlier BA in the same agreement; red crosses "
-                   "have no earlier observed set. A zero does not prove that a frame was "
-                   "transmitted or lost."));
+                   "have no earlier observed set. Either is gray for a BA with an explicit "
+                   "FCS error. A zero does not prove that a frame was transmitted or lost."));
     session_layout->addWidget(station_pair_label);
     session_layout->addWidget(d_->station_pair_combo, 1);
     session_layout->addWidget(tid_label);
@@ -626,7 +639,9 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "show captured reverse-direction QoS Data MPDUs; they do not affect the "
                    "Block Ack analysis. When bitmap holes are enabled, green crosses mark "
                    "zeros for positions set by an earlier BA in the same agreement; red "
-                   "crosses mark positions without an earlier observed set."));
+                   "crosses mark positions without an earlier observed set. BA points and "
+                   "bitmap positions explicitly reported with an FCS error are overlaid "
+                   "in gray."));
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
                        QCustomPlot::limBelow);
     d_->plot->addLayer(QStringLiteral("baTimeDeltaLabels"),
@@ -738,6 +753,58 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                                 QColor(tango_aluminium_6),
                                 QColor(tango_aluminium_4), 7));
     d_->advance_span_graph->setSelectable(QCP::stNone);
+
+    // Keep the normal traces intact, then cover the markers belonging to an
+    // explicitly bad-FCS BA. A step segment spans multiple samples and retains
+    // its semantic blue/orange color; the sample itself and its bitmap are gray.
+    d_->bad_fcs_anchor_graph = d_->plot->addGraph();
+    d_->bad_fcs_anchor_graph->setObjectName(
+                QStringLiteral("badFcsBaStartingSequenceGraph"));
+    d_->bad_fcs_anchor_graph->setName(tr("BA with explicit FCS error"));
+    d_->bad_fcs_anchor_graph->setLineStyle(QCPGraph::lsNone);
+    d_->bad_fcs_anchor_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDisc,
+                                QColor(tango_aluminium_5),
+                                QColor(tango_aluminium_3), 9));
+    d_->bad_fcs_anchor_graph->setSelectable(QCP::stSingleData);
+    QCPSelectionDecorator *bad_fcs_selection = new QCPSelectionDecorator;
+    bad_fcs_selection->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDisc,
+                                QColor(tango_aluminium_6),
+                                QColor(tango_aluminium_3), 11),
+                QCPScatterStyle::spPen | QCPScatterStyle::spBrush |
+                QCPScatterStyle::spSize);
+    d_->bad_fcs_anchor_graph->setSelectionDecorator(bad_fcs_selection);
+
+    d_->bad_fcs_window_upper_graph = d_->plot->addGraph();
+    d_->bad_fcs_window_upper_graph->setObjectName(
+                QStringLiteral("badFcsBaWindowUpperBoundGraph"));
+    d_->bad_fcs_window_upper_graph->setLineStyle(QCPGraph::lsNone);
+    d_->bad_fcs_window_upper_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDisc,
+                                QColor(tango_aluminium_5), 7));
+    d_->bad_fcs_window_upper_graph->setSelectable(QCP::stNone);
+    d_->bad_fcs_window_upper_graph->removeFromLegend();
+
+    d_->bad_fcs_set_graph = d_->plot->addGraph();
+    d_->bad_fcs_set_graph->setObjectName(
+                QStringLiteral("badFcsBaBitmapSetGraph"));
+    d_->bad_fcs_set_graph->setLineStyle(QCPGraph::lsNone);
+    d_->bad_fcs_set_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDisc,
+                                QColor(tango_aluminium_5), 7));
+    d_->bad_fcs_set_graph->setSelectable(QCP::stNone);
+    d_->bad_fcs_set_graph->removeFromLegend();
+
+    d_->bad_fcs_zero_graph = d_->plot->addGraph();
+    d_->bad_fcs_zero_graph->setObjectName(
+                QStringLiteral("badFcsBaBitmapZeroGraph"));
+    d_->bad_fcs_zero_graph->setLineStyle(QCPGraph::lsNone);
+    d_->bad_fcs_zero_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssCross,
+                                QColor(tango_aluminium_5), 9));
+    d_->bad_fcs_zero_graph->setSelectable(QCP::stNone);
+    d_->bad_fcs_zero_graph->removeFromLegend();
 
     d_->details_label = new QLabel(
                 tr("Block Ack responses drive the acknowledgment analysis. Matching captured "
@@ -894,6 +961,9 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
     bool is_request = subtypes.contains(0x0018);
     bool is_response = subtypes.contains(0x0019);
     bool is_qos_data = std::any_of(subtypes.cbegin(), subtypes.cend(), isQosDataSubtype);
+    bool explicit_fcs_error =
+            booleanFieldValues(edt, d->hf_radiotap_bad_fcs).contains(true) ||
+            unsignedFieldValues(edt, d->hf_fcs_status).contains(PROTO_CHECKSUM_E_BAD);
 
     QVector<uint32_t> action_categories = unsignedFieldValues(
                 edt, d->hf_action_category);
@@ -1059,6 +1129,7 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
         sample.frame_number = pinfo->num;
         sample.relative_time = nstime_to_sec(&pinfo->rel_ts);
         sample.is_request = is_request;
+        sample.explicit_fcs_error = explicit_fcs_error;
         sample.type = type;
         sample.tid = tids.at(i);
         sample.starting_sequence = starting_sequences.at(i) & 0x0fff;
@@ -1125,7 +1196,8 @@ void WlanBlockAckGraphDialog::collectBlockAcks()
             "wlan.fixed.category_code || wlan.fixed.action_code || "
             "wlan.fixed.baparams.tid || wlan.fixed.delba.param.tid || "
             "wlan.fixed.delba.param.initiator || wlan.fixed.status_code || "
-            "wlan.fc.retry || wlan.fixed.dialog_token || wlan.fixed.reason_code)";
+            "wlan.fc.retry || wlan.fixed.dialog_token || wlan.fixed.reason_code || "
+            "wlan.fcs.status || radiotap.flags.badfcs)";
 
     if (!registerTapListener("wlan", this, tap_filter, TL_REQUIRES_PROTO_TREE,
                              tapReset, tapPacket, tapDraw)) {
@@ -1355,6 +1427,11 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_error_bars->data()->clear();
     d_->advance_span_graph->data()->clear();
+    d_->bad_fcs_anchor_graph->data()->clear();
+    d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
+    d_->bad_fcs_window_upper_graph->data()->clear();
+    d_->bad_fcs_set_graph->data()->clear();
+    d_->bad_fcs_zero_graph->data()->clear();
     d_->anchor_sample_indexes.clear();
     d_->anchor_unwrapped_sequences.clear();
     d_->request_sample_indexes.clear();
@@ -1363,6 +1440,9 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->set_anchor_indexes.clear();
     d_->previously_set_zero_anchor_indexes.clear();
     d_->hole_anchor_indexes.clear();
+    d_->bad_fcs_anchor_indexes.clear();
+    d_->bad_fcs_set_anchor_indexes.clear();
+    d_->bad_fcs_zero_anchor_indexes.clear();
     d_->persistent_hole_spans.clear();
     d_->selected_frame = 0;
 
@@ -1434,6 +1514,14 @@ void WlanBlockAckGraphDialog::drawSession()
     QVector<double> hole_sequences;
     QVector<double> advance_span_times;
     QVector<double> advance_span_sequences;
+    QVector<double> bad_fcs_anchor_times;
+    QVector<double> bad_fcs_anchor_sequences;
+    QVector<double> bad_fcs_window_upper_times;
+    QVector<double> bad_fcs_window_upper_sequences;
+    QVector<double> bad_fcs_set_times;
+    QVector<double> bad_fcs_set_sequences;
+    QVector<double> bad_fcs_zero_times;
+    QVector<double> bad_fcs_zero_sequences;
     // A hole starts only as a zero below a later set bit. Once active, every
     // subsequent BA which covers it and still reports zero contributes to its
     // age, even when the zero is beyond that BA's highest set position.
@@ -1530,6 +1618,11 @@ void WlanBlockAckGraphDialog::drawSession()
         d_->anchor_sample_indexes.append(sample_index);
         d_->anchor_unwrapped_sequences.append(unwrapped);
         int anchor_index = static_cast<int>(d_->anchor_sample_indexes.size()) - 1;
+        if (sample.explicit_fcs_error) {
+            bad_fcs_anchor_times.append(sample.relative_time);
+            bad_fcs_anchor_sequences.append(unwrapped);
+            d_->bad_fcs_anchor_indexes.append(anchor_index);
+        }
 
         int positions = bitmapPositionCount(sample);
         // The same TA/RA/TID can start a new BA epoch later in the capture.
@@ -1547,6 +1640,10 @@ void WlanBlockAckGraphDialog::drawSession()
         have_previous_ba = true;
         window_upper_times.append(sample.relative_time);
         window_upper_sequences.append(unwrapped + positions);
+        if (sample.explicit_fcs_error) {
+            bad_fcs_window_upper_times.append(sample.relative_time);
+            bad_fcs_window_upper_sequences.append(unwrapped + positions);
+        }
 
         if (have_ack_frontier && unwrapped > next_sequence_after_highest_ack) {
             for (int sequence = next_sequence_after_highest_ack;
@@ -1568,7 +1665,8 @@ void WlanBlockAckGraphDialog::drawSession()
         QFont label_font = d_->plot->font();
         label_font.setPointSize(8);
         ssn_label->setFont(label_font);
-        ssn_label->setColor(QColor(tango_sky_blue_5));
+        ssn_label->setColor(QColor(sample.explicit_fcs_error
+                                   ? tango_aluminium_5 : tango_sky_blue_5));
         ssn_label->setPen(Qt::NoPen);
         ssn_label->setBrush(Qt::NoBrush);
         ssn_label->setSelectable(false);
@@ -1654,11 +1752,21 @@ void WlanBlockAckGraphDialog::drawSession()
                 set_times.append(sample.relative_time);
                 set_sequences.append(sequence);
                 d_->set_anchor_indexes.append(anchor_index);
+                if (sample.explicit_fcs_error) {
+                    bad_fcs_set_times.append(sample.relative_time);
+                    bad_fcs_set_sequences.append(sequence);
+                    d_->bad_fcs_set_anchor_indexes.append(anchor_index);
+                }
                 previously_set_sequences.insert(sequence);
                 if (sequence >= greatest_ssn) {
                     acknowledged_sequences.insert(sequence);
                 }
             } else {
+                if (sample.explicit_fcs_error) {
+                    bad_fcs_zero_times.append(sample.relative_time);
+                    bad_fcs_zero_sequences.append(sequence);
+                    d_->bad_fcs_zero_anchor_indexes.append(anchor_index);
+                }
                 if (previously_set_sequences.contains(sequence)) {
                     previously_set_zero_times.append(sample.relative_time);
                     previously_set_zero_sequences.append(sequence);
@@ -1783,6 +1891,14 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->persistent_hole_error_bars->setData(
                 persistent_hole_durations, persistent_hole_error_plus);
     d_->advance_span_graph->setData(advance_span_times, advance_span_sequences, true);
+    d_->bad_fcs_anchor_graph->setData(
+                bad_fcs_anchor_times, bad_fcs_anchor_sequences, true);
+    d_->bad_fcs_window_upper_graph->setData(
+                bad_fcs_window_upper_times, bad_fcs_window_upper_sequences, true);
+    d_->bad_fcs_set_graph->setData(
+                bad_fcs_set_times, bad_fcs_set_sequences, true);
+    d_->bad_fcs_zero_graph->setData(
+                bad_fcs_zero_times, bad_fcs_zero_sequences, true);
     d_->advance_span_graph->setVisible(d_->show_ack_gaps->isChecked());
     d_->mpdu_graph->setVisible(d_->show_mpdus->isChecked());
     bool show_persistent_holes = d_->show_persistent_holes->isChecked() &&
@@ -1791,8 +1907,10 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->persistent_hole_graph->setVisible(show_persistent_holes);
     d_->persistent_hole_error_bars->setVisible(show_persistent_holes);
     d_->set_graph->setVisible(d_->show_bitmap_set->isChecked());
+    d_->bad_fcs_set_graph->setVisible(d_->show_bitmap_set->isChecked());
     d_->previously_set_zero_graph->setVisible(d_->show_holes->isChecked());
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
+    d_->bad_fcs_zero_graph->setVisible(d_->show_holes->isChecked());
     if (d_->show_time_deltas->isChecked()) {
         drawTimeDeltaLabels();
     }
@@ -1858,8 +1976,9 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
                    "%6 bitmap-set position(s) · %7 bitmap hole(s) · "
                    "%8 prior-set zero(s) · %9 persistent-hole lifetime(s) · "
                    "%10 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "Capture totals: %11/%12 unsupported BA/BAR · "
-                   "%13/%14 malformed BA/BAR")
+                   "%11 explicit-FCS-error BA(s) · "
+                   "Capture totals: %12/%13 unsupported BA/BAR · "
+                   "%14/%15 malformed BA/BAR")
                 .arg(d_->sessions.size())
                 .arg(durationLabel(key_range.size()))
                 .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
@@ -1871,6 +1990,8 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
                                             key_range, value_range))
                 .arg(persistent_hole_count)
                 .arg(graphPointCountInRange(d_->advance_span_graph,
+                                            key_range, value_range))
+                .arg(graphPointCountInRange(d_->bad_fcs_anchor_graph,
                                             key_range, value_range))
                 .arg(d_->unsupported_ba_frames)
                 .arg(d_->unsupported_bar_frames)
@@ -1959,11 +2080,13 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
                 .arg(set_positions)
                 .arg(window_positions);
     }
+    QString fcs_detail = sample.explicit_fcs_error
+            ? tr(" · explicit FCS error; plotted in gray") : QString();
 
     d_->details_label->setText(
                 tr("Frame %1 · %2 BA · TA %3 → RA %4 · TID %5 · SSN %6 "
                    "(unwrapped %7) · window upper bound %8 (unwrapped %9, exclusive) · "
-                   "%10. Click a BA point to go to this frame.")
+                   "%10%11. Click a BA point to go to this frame.")
                 .arg(sample.frame_number)
                 .arg(blockAckTypeName(sample.type))
                 .arg(d_->sessions.at(session_index).ta,
@@ -1973,13 +2096,20 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
                 .arg(d_->anchor_unwrapped_sequences.at(data_index))
                 .arg(upper_bound)
                 .arg(unwrapped_upper_bound)
-                .arg(bitmap_detail));
+                .arg(bitmap_detail)
+                .arg(fcs_detail));
 
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
-    d_->anchor_graph->setSelection(
-                QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
+    int bad_fcs_index = static_cast<int>(
+                d_->bad_fcs_anchor_indexes.indexOf(data_index));
+    d_->anchor_graph->setSelection(bad_fcs_index >= 0
+            ? QCPDataSelection()
+            : QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
+    d_->bad_fcs_anchor_graph->setSelection(bad_fcs_index >= 0
+            ? QCPDataSelection(QCPDataRange(bad_fcs_index, bad_fcs_index + 1))
+            : QCPDataSelection());
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
@@ -2011,6 +2141,7 @@ void WlanBlockAckGraphDialog::showRequestDetails(int data_index)
                 .arg(d_->request_unwrapped_sequences.at(data_index)));
 
     d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(
@@ -2046,6 +2177,7 @@ void WlanBlockAckGraphDialog::showMpduDetails(int data_index)
                 .arg(d_->mpdu_unwrapped_sequences.at(data_index)));
 
     d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(
@@ -2122,6 +2254,7 @@ void WlanBlockAckGraphDialog::showPersistentHoleDetails(int data_index)
                 .arg(outcome));
 
     d_->anchor_graph->setSelection(QCPDataSelection());
+    d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(
@@ -2150,6 +2283,19 @@ int WlanBlockAckGraphDialog::anchorIndexForPlottable(
     }
     if (plottable == d_->hole_graph && data_index < d_->hole_anchor_indexes.size()) {
         return d_->hole_anchor_indexes.at(data_index);
+    }
+    if ((plottable == d_->bad_fcs_anchor_graph ||
+         plottable == d_->bad_fcs_window_upper_graph) &&
+        data_index < d_->bad_fcs_anchor_indexes.size()) {
+        return d_->bad_fcs_anchor_indexes.at(data_index);
+    }
+    if (plottable == d_->bad_fcs_set_graph &&
+        data_index < d_->bad_fcs_set_anchor_indexes.size()) {
+        return d_->bad_fcs_set_anchor_indexes.at(data_index);
+    }
+    if (plottable == d_->bad_fcs_zero_graph &&
+        data_index < d_->bad_fcs_zero_anchor_indexes.size()) {
+        return d_->bad_fcs_zero_anchor_indexes.at(data_index);
     }
     return -1;
 }
@@ -2210,6 +2356,7 @@ void WlanBlockAckGraphDialog::persistentHolesToggled(bool checked)
 void WlanBlockAckGraphDialog::bitmapSetToggled(bool checked)
 {
     d_->set_graph->setVisible(checked);
+    d_->bad_fcs_set_graph->setVisible(checked);
     d_->plot->replot();
 }
 
@@ -2217,6 +2364,7 @@ void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
 {
     d_->previously_set_zero_graph->setVisible(checked);
     d_->hole_graph->setVisible(checked);
+    d_->bad_fcs_zero_graph->setVisible(checked);
     d_->plot->replot();
 }
 
