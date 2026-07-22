@@ -50,6 +50,10 @@ constexpr uint32_t basic_block_ack = 0;
 constexpr uint32_t extended_compressed_block_ack = 1;
 constexpr uint32_t compressed_block_ack = 2;
 constexpr uint32_t multi_tid_block_ack = 3;
+constexpr uint32_t block_ack_action_category = 3;
+constexpr uint32_t add_block_ack_response = 1;
+constexpr uint32_t delete_block_ack = 2;
+constexpr double management_retry_dedup_seconds = 1.0;
 constexpr int sequence_modulus = 4096;
 constexpr int sequence_half_range = sequence_modulus / 2;
 constexpr int min_zoom_pixels = 20;
@@ -138,6 +142,17 @@ struct BaSample {
     QByteArray bitmap;
 };
 
+enum class AgreementEventType {
+    Started,
+    Ended
+};
+
+struct AgreementEvent {
+    uint32_t frame_number = 0;
+    double relative_time = 0.0;
+    AgreementEventType type = AgreementEventType::Started;
+};
+
 struct MpduSample {
     uint32_t frame_number = 0;
     double relative_time = 0.0;
@@ -148,6 +163,8 @@ enum class PersistentHoleOutcome {
     Acknowledged,
     PassedBySsn,
     WindowInterrupted,
+    AgreementStarted,
+    AgreementEnded,
     EpochReset,
     Active
 };
@@ -248,6 +265,17 @@ static QVector<uint32_t> unsignedFieldValues(epan_dissect *edt, const FieldIds &
     QVector<uint32_t> values;
     for (const field_info *field : fieldInfos(edt, hf_ids)) {
         values.append(fvalue_get_uinteger(field->value));
+    }
+    return values;
+}
+
+static QVector<bool> booleanFieldValues(epan_dissect *edt, const FieldIds &hf_ids)
+{
+    QVector<bool> values;
+    for (const field_info *field : fieldInfos(edt, hf_ids)) {
+        if (field->hfinfo->type == FT_BOOLEAN) {
+            values.append(fvalue_get_uinteger64(field->value) != 0);
+        }
     }
     return values;
 }
@@ -390,6 +418,15 @@ public:
         hf_multi_tid(fieldIdsByName("wlan.bar.mtid.tidinfo.value")),
         hf_starting_sequence(fieldIdsByName("wlan.fixed.ssc.sequence")),
         hf_bitmap(fieldIdsByName("wlan.ba.bm")),
+        hf_action_category(fieldIdsByName("wlan.fixed.category_code")),
+        hf_action_code(fieldIdsByName("wlan.fixed.action_code")),
+        hf_addba_tid(fieldIdsByName("wlan.fixed.baparams.tid")),
+        hf_delba_tid(fieldIdsByName("wlan.fixed.delba.param.tid")),
+        hf_delba_initiator(fieldIdsByName("wlan.fixed.delba.param.initiator")),
+        hf_status_code(fieldIdsByName("wlan.fixed.status_code")),
+        hf_retry(fieldIdsByName("wlan.fc.retry")),
+        hf_dialog_token(fieldIdsByName("wlan.fixed.dialog_token")),
+        hf_reason_code(fieldIdsByName("wlan.fixed.reason_code")),
         hf_qos_tid(fieldIdsByName("wlan.qos.tid")),
         hf_mpdu_sequence(fieldIdsByName("wlan.seq")),
         hf_ta(fieldIdsByName("wlan.ta")),
@@ -403,6 +440,15 @@ public:
     FieldIds hf_multi_tid;
     FieldIds hf_starting_sequence;
     FieldIds hf_bitmap;
+    FieldIds hf_action_category;
+    FieldIds hf_action_code;
+    FieldIds hf_addba_tid;
+    FieldIds hf_delba_tid;
+    FieldIds hf_delba_initiator;
+    FieldIds hf_status_code;
+    FieldIds hf_retry;
+    FieldIds hf_dialog_token;
+    FieldIds hf_reason_code;
     FieldIds hf_qos_tid;
     FieldIds hf_mpdu_sequence;
     FieldIds hf_ta;
@@ -411,6 +457,8 @@ public:
     QVector<BaSession> sessions;
     QVector<BaStaPair> sta_pairs;
     QHash<QString, int> session_indexes;
+    QHash<QString, QVector<AgreementEvent>> agreement_events;
+    QHash<QString, double> agreement_retry_times;
     QHash<QString, QVector<MpduSample>> captured_mpdus;
     QVector<int> anchor_sample_indexes;
     QVector<int> anchor_unwrapped_sequences;
@@ -418,6 +466,7 @@ public:
     QVector<int> request_unwrapped_sequences;
     QVector<int> mpdu_unwrapped_sequences;
     QVector<int> set_anchor_indexes;
+    QVector<int> previously_set_zero_anchor_indexes;
     QVector<int> hole_anchor_indexes;
     QVector<PersistentHoleSpan> persistent_hole_spans;
     QVector<QCPItemText *> ssn_labels;
@@ -442,6 +491,7 @@ public:
     QCPGraph *request_graph = nullptr;
     QCPGraph *window_upper_graph = nullptr;
     QCPGraph *set_graph = nullptr;
+    QCPGraph *previously_set_zero_graph = nullptr;
     QCPGraph *hole_graph = nullptr;
     QCPGraph *persistent_hole_graph = nullptr;
     QCPErrorBars *persistent_hole_error_bars = nullptr;
@@ -543,8 +593,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_holes = new QCheckBox(tr("Show bitmap holes"), this);
     d_->show_holes->setObjectName(QStringLiteral("showBitmapHolesCheckBox"));
     d_->show_holes->setChecked(false);
-    d_->show_holes->setToolTip(tr("Show zero bitmap positions before the highest set position. "
-                                  "A zero does not prove that a frame was transmitted or lost."));
+    d_->show_holes->setToolTip(
+                tr("Show zero bitmap positions before the highest set position. Green "
+                   "crosses were set by an earlier BA in the same agreement; red crosses "
+                   "have no earlier observed set. A zero does not prove that a frame was "
+                   "transmitted or lost."));
     session_layout->addWidget(station_pair_label);
     session_layout->addWidget(d_->station_pair_combo, 1);
     session_layout->addWidget(tid_label);
@@ -571,7 +624,9 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "past them. Dark-red horizontal spans show persistent BA bitmap holes; click "
                    "a square endpoint for its lifetime and resolution details. Gold diamonds "
                    "show captured reverse-direction QoS Data MPDUs; they do not affect the "
-                   "Block Ack analysis."));
+                   "Block Ack analysis. When bitmap holes are enabled, green crosses mark "
+                   "zeros for positions set by an earlier BA in the same agreement; red "
+                   "crosses mark positions without an earlier observed set."));
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
                        QCustomPlot::limBelow);
     d_->plot->addLayer(QStringLiteral("baTimeDeltaLabels"),
@@ -633,8 +688,19 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                                                     QColor(tango_chameleon_5), 5));
     d_->set_graph->setSelectable(QCP::stNone);
 
+    d_->previously_set_zero_graph = d_->plot->addGraph();
+    d_->previously_set_zero_graph->setObjectName(
+                QStringLiteral("baPreviouslySetZeroGraph"));
+    d_->previously_set_zero_graph->setName(
+                tr("BA bitmap zero after prior set"));
+    d_->previously_set_zero_graph->setLineStyle(QCPGraph::lsNone);
+    d_->previously_set_zero_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssCross,
+                                QColor(tango_chameleon_5), 7));
+    d_->previously_set_zero_graph->setSelectable(QCP::stNone);
+
     d_->hole_graph = d_->plot->addGraph();
-    d_->hole_graph->setName(tr("BA bitmap zero before highest set"));
+    d_->hole_graph->setName(tr("BA bitmap zero without prior set"));
     d_->hole_graph->setLineStyle(QCPGraph::lsNone);
     d_->hole_graph->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross,
                                                      QColor(tango_scarlet_red_3), 7));
@@ -802,6 +868,8 @@ void WlanBlockAckGraphDialog::tapReset(void *dialog_ptr)
     dialog->d_->sessions.clear();
     dialog->d_->sta_pairs.clear();
     dialog->d_->session_indexes.clear();
+    dialog->d_->agreement_events.clear();
+    dialog->d_->agreement_retry_times.clear();
     dialog->d_->captured_mpdus.clear();
     dialog->d_->total_ba_frames = 0;
     dialog->d_->total_bar_frames = 0;
@@ -826,6 +894,90 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
     bool is_request = subtypes.contains(0x0018);
     bool is_response = subtypes.contains(0x0019);
     bool is_qos_data = std::any_of(subtypes.cbegin(), subtypes.cend(), isQosDataSubtype);
+
+    QVector<uint32_t> action_categories = unsignedFieldValues(
+                edt, d->hf_action_category);
+    QVector<uint32_t> action_codes = unsignedFieldValues(edt, d->hf_action_code);
+    if (action_categories.contains(block_ack_action_category) &&
+        action_codes.size() == 1 &&
+        (action_codes.first() == add_block_ack_response ||
+         action_codes.first() == delete_block_ack)) {
+        if (!pinfo->dl_src.data || pinfo->dl_src.len != 6 ||
+            !pinfo->dl_dst.data || pinfo->dl_dst.len != 6) {
+            return TAP_PACKET_DONT_REDRAW;
+        }
+
+        bool is_addba_response = action_codes.first() == add_block_ack_response;
+        QVector<uint32_t> tids = unsignedFieldValues(
+                    edt, is_addba_response ? d->hf_addba_tid : d->hf_delba_tid);
+        QVector<uint32_t> status_codes;
+        QVector<bool> initiators;
+        if (is_addba_response) {
+            status_codes = unsignedFieldValues(edt, d->hf_status_code);
+        } else {
+            initiators = booleanFieldValues(edt, d->hf_delba_initiator);
+        }
+        if (tids.size() != 1 ||
+            (is_addba_response &&
+             (status_codes.size() != 1 || status_codes.first() != 0)) ||
+            (!is_addba_response && initiators.size() != 1)) {
+            return TAP_PACKET_DONT_REDRAW;
+        }
+
+        QString ta = address_to_qstring(&pinfo->dl_src);
+        QString ra = address_to_qstring(&pinfo->dl_dst);
+        // A successful ADDBA Response travels in the BA-response direction.
+        // For DELBA, the Initiator bit identifies which endpoint is the data
+        // originator. Normalize both to that same BA TA → RA direction.
+        bool sender_is_originator = !is_addba_response && initiators.first() != 0;
+        QString session_ta = sender_is_originator ? ra : ta;
+        QString session_ra = sender_is_originator ? ta : ra;
+        QString key = sessionKey(session_ta, session_ra, tids.first() & 0x0f);
+        QVector<uint32_t> management_sequences = unsignedFieldValues(
+                    edt, d->hf_mpdu_sequence);
+        QVector<bool> retries = booleanFieldValues(edt, d->hf_retry);
+        QVector<uint32_t> dialog_tokens = unsignedFieldValues(
+                    edt, d->hf_dialog_token);
+        QVector<uint32_t> reason_codes = unsignedFieldValues(
+                    edt, d->hf_reason_code);
+        bool have_retry_signature = management_sequences.size() == 1 &&
+                retries.size() == 1 &&
+                (is_addba_response ? dialog_tokens.size() == 1
+                                   : reason_codes.size() == 1);
+        double relative_time = nstime_to_sec(&pinfo->rel_ts);
+        if (have_retry_signature) {
+            // Retries retain the transmitter's management sequence number and
+            // action details. Limit matches to a short burst so eventual
+            // 12-bit management-sequence reuse still creates a new boundary.
+            uint32_t action_detail = is_addba_response
+                    ? dialog_tokens.first() : reason_codes.first();
+            QString retry_key = QStringLiteral("%1|%2|%3|%4|%5|%6")
+                    .arg(key)
+                    .arg(action_codes.first())
+                    .arg(ta)
+                    .arg(management_sequences.first())
+                    .arg(action_detail)
+                    .arg(is_addba_response ? 0 : initiators.first());
+            auto previous_retry = d->agreement_retry_times.constFind(retry_key);
+            bool duplicate_retry = retries.first() &&
+                    previous_retry != d->agreement_retry_times.cend() &&
+                    relative_time >= previous_retry.value() &&
+                    relative_time - previous_retry.value() <=
+                    management_retry_dedup_seconds;
+            d->agreement_retry_times.insert(retry_key, relative_time);
+            if (duplicate_retry) {
+                return TAP_PACKET_DONT_REDRAW;
+            }
+        }
+
+        AgreementEvent event;
+        event.frame_number = pinfo->num;
+        event.relative_time = relative_time;
+        event.type = is_addba_response
+                ? AgreementEventType::Started : AgreementEventType::Ended;
+        d->agreement_events[key].append(event);
+        return TAP_PACKET_DONT_REDRAW;
+    }
 
     if (is_qos_data && !is_request && !is_response) {
         QVector<uint32_t> tids = unsignedFieldValues(edt, d->hf_qos_tid);
@@ -955,17 +1107,25 @@ void WlanBlockAckGraphDialog::collectBlockAcks()
 {
     // Every field in the second clause is included to prime it in the protocol
     // tree. QoS Data subtypes 0x28 through 0x2b carry the per-TID MPDU sequence
-    // numbers plotted alongside Block Ack Requests and responses.
+    // numbers plotted alongside Block Ack Requests and responses. Successful
+    // ADDBA responses and DELBA frames delimit prior-set bitmap history.
     static const char tap_filter[] =
-            "(wlan.fc.type_subtype == 0x0018 || "
+            "((wlan.fc.type_subtype == 0x0018 || "
             "wlan.fc.type_subtype == 0x0019 || "
             "wlan.fc.type_subtype == 0x0028 || "
             "wlan.fc.type_subtype == 0x0029 || "
             "wlan.fc.type_subtype == 0x002a || "
-            "wlan.fc.type_subtype == 0x002b) && "
+            "wlan.fc.type_subtype == 0x002b) || "
+            "(wlan.fc.type_subtype == 0x000d && "
+            "wlan.fixed.category_code == 3 && "
+            "(wlan.fixed.action_code == 1 || wlan.fixed.action_code == 2))) && "
             "(wlan.ta || wlan.ra || wlan.ba.control.ba_type || "
             "wlan.ba.basic.tidinfo || wlan.bar.mtid.tidinfo.value || "
-            "wlan.fixed.ssc.sequence || wlan.ba.bm || wlan.qos.tid || wlan.seq)";
+            "wlan.fixed.ssc.sequence || wlan.ba.bm || wlan.qos.tid || wlan.seq || "
+            "wlan.fixed.category_code || wlan.fixed.action_code || "
+            "wlan.fixed.baparams.tid || wlan.fixed.delba.param.tid || "
+            "wlan.fixed.delba.param.initiator || wlan.fixed.status_code || "
+            "wlan.fc.retry || wlan.fixed.dialog_token || wlan.fixed.reason_code)";
 
     if (!registerTapListener("wlan", this, tap_filter, TL_REQUIRES_PROTO_TREE,
                              tapReset, tapPacket, tapDraw)) {
@@ -985,6 +1145,16 @@ void WlanBlockAckGraphDialog::populateSessions()
     for (auto it = d_->captured_mpdus.begin(); it != d_->captured_mpdus.end(); ++it) {
         std::stable_sort(it.value().begin(), it.value().end(),
                          [](const MpduSample &left, const MpduSample &right) {
+            if (left.relative_time != right.relative_time) {
+                return left.relative_time < right.relative_time;
+            }
+            return left.frame_number < right.frame_number;
+        });
+    }
+
+    for (auto it = d_->agreement_events.begin(); it != d_->agreement_events.end(); ++it) {
+        std::stable_sort(it.value().begin(), it.value().end(),
+                         [](const AgreementEvent &left, const AgreementEvent &right) {
             if (left.relative_time != right.relative_time) {
                 return left.relative_time < right.relative_time;
             }
@@ -1179,6 +1349,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->mpdu_graph->setSelection(QCPDataSelection());
     d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
+    d_->previously_set_zero_graph->data()->clear();
     d_->hole_graph->data()->clear();
     d_->persistent_hole_graph->data()->clear();
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
@@ -1190,6 +1361,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->request_unwrapped_sequences.clear();
     d_->mpdu_unwrapped_sequences.clear();
     d_->set_anchor_indexes.clear();
+    d_->previously_set_zero_anchor_indexes.clear();
     d_->hole_anchor_indexes.clear();
     d_->persistent_hole_spans.clear();
     d_->selected_frame = 0;
@@ -1229,10 +1401,13 @@ void WlanBlockAckGraphDialog::drawSession()
     const BaSession &session = d_->sessions.at(session_index);
     int response_count = baResponseCount(session);
     bool have_responses = response_count > 0;
-    const auto mpdu_it = d_->captured_mpdus.constFind(
-                sessionKey(session.ta, session.ra, session.tid));
+    QString key = sessionKey(session.ta, session.ra, session.tid);
+    const auto mpdu_it = d_->captured_mpdus.constFind(key);
     const QVector<MpduSample> *mpdus = mpdu_it == d_->captured_mpdus.cend()
             ? nullptr : &mpdu_it.value();
+    const auto agreement_it = d_->agreement_events.constFind(key);
+    const QVector<AgreementEvent> *agreement_events =
+            agreement_it == d_->agreement_events.cend() ? nullptr : &agreement_it.value();
     int mpdu_count = mpdus ? static_cast<int>(mpdus->size()) : 0;
     d_->show_ssn_labels->setEnabled(have_responses);
     d_->show_time_deltas->setEnabled(have_responses);
@@ -1253,6 +1428,8 @@ void WlanBlockAckGraphDialog::drawSession()
     QVector<double> window_upper_sequences;
     QVector<double> set_times;
     QVector<double> set_sequences;
+    QVector<double> previously_set_zero_times;
+    QVector<double> previously_set_zero_sequences;
     QVector<double> hole_times;
     QVector<double> hole_sequences;
     QVector<double> advance_span_times;
@@ -1264,6 +1441,10 @@ void WlanBlockAckGraphDialog::drawSession()
     // Prevent a stale, backward BA from recreating a sequence which this epoch
     // already acknowledged or advanced past.
     QSet<int> acknowledged_sequences;
+    // Retain explicit set-bit evidence for the entire agreement. The pruned
+    // set above is sufficient for persistent-hole analysis but not for
+    // classifying a later stale or backward BA bitmap.
+    QSet<int> previously_set_sequences;
     int greatest_ssn = 0;
     bool have_greatest_ssn = false;
     auto finish_persistent_hole = [this](
@@ -1287,13 +1468,46 @@ void WlanBlockAckGraphDialog::drawSession()
     // Exclusive frontier: the first trailing sequence without an observed BA ACK.
     int next_sequence_after_highest_ack = 0;
     bool have_ack_frontier = false;
+    auto reset_ack_analysis = [&](PersistentHoleOutcome outcome,
+                                  uint32_t terminal_frame_number) {
+        const QList<int> active_sequences = active_holes.keys();
+        for (int sequence : active_sequences) {
+            const PersistentHoleTrack track = active_holes.value(sequence);
+            finish_persistent_hole(
+                        sequence, track, outcome, track.last_zero_anchor_index,
+                        track.last_zero_relative_time, terminal_frame_number);
+        }
+        active_holes.clear();
+        acknowledged_sequences.clear();
+        previously_set_sequences.clear();
+        have_greatest_ssn = false;
+        next_sequence_after_highest_ack = 0;
+        have_ack_frontier = false;
+    };
     // BARs are plotted near the latest BA but must not affect BA unwrapping or analysis.
     uint32_t previous_ba_sequence = 0;
     int previous_ba_unwrapped = 0;
     bool have_previous_ba = false;
+    int agreement_event_index = 0;
 
     for (int sample_index = 0; sample_index < session.samples.size(); sample_index++) {
         const BaSample &sample = session.samples.at(sample_index);
+        while (agreement_events && agreement_event_index < agreement_events->size()) {
+            const AgreementEvent &event = agreement_events->at(agreement_event_index);
+            bool event_precedes_sample = event.relative_time < sample.relative_time ||
+                    (event.relative_time == sample.relative_time &&
+                     event.frame_number < sample.frame_number);
+            if (!event_precedes_sample) {
+                break;
+            }
+            PersistentHoleOutcome outcome = event.type == AgreementEventType::Started
+                    ? PersistentHoleOutcome::AgreementStarted
+                    : PersistentHoleOutcome::AgreementEnded;
+            reset_ack_analysis(outcome, event.frame_number);
+            have_previous_ba = false;
+            agreement_event_index++;
+        }
+
         int unwrapped = static_cast<int>(sample.starting_sequence);
         if (have_previous_ba) {
             unwrapped = unwrapSequence(sample.starting_sequence, previous_ba_sequence,
@@ -1310,9 +1524,6 @@ void WlanBlockAckGraphDialog::drawSession()
 
         bool ba_ssn_moved_backward = have_previous_ba &&
                 unwrapped < previous_ba_unwrapped;
-        previous_ba_sequence = sample.starting_sequence;
-        previous_ba_unwrapped = unwrapped;
-        have_previous_ba = true;
 
         anchor_times.append(sample.relative_time);
         anchor_sequences.append(unwrapped);
@@ -1328,20 +1539,12 @@ void WlanBlockAckGraphDialog::drawSession()
         bool epoch_reset = have_ack_frontier && ba_ssn_moved_backward &&
                 unwrapped + positions <= next_sequence_after_highest_ack;
         if (epoch_reset) {
-            const QList<int> active_sequences = active_holes.keys();
-            for (int sequence : active_sequences) {
-                const PersistentHoleTrack track = active_holes.value(sequence);
-                finish_persistent_hole(
-                            sequence, track, PersistentHoleOutcome::EpochReset,
-                            track.last_zero_anchor_index,
-                            track.last_zero_relative_time, sample.frame_number);
-            }
-            active_holes.clear();
-            acknowledged_sequences.clear();
-            have_greatest_ssn = false;
-            next_sequence_after_highest_ack = 0;
-            have_ack_frontier = false;
+            reset_ack_analysis(PersistentHoleOutcome::EpochReset,
+                               sample.frame_number);
         }
+        previous_ba_sequence = sample.starting_sequence;
+        previous_ba_unwrapped = unwrapped;
+        have_previous_ba = true;
         window_upper_times.append(sample.relative_time);
         window_upper_sequences.append(unwrapped + positions);
 
@@ -1451,27 +1654,43 @@ void WlanBlockAckGraphDialog::drawSession()
                 set_times.append(sample.relative_time);
                 set_sequences.append(sequence);
                 d_->set_anchor_indexes.append(anchor_index);
+                previously_set_sequences.insert(sequence);
                 if (sequence >= greatest_ssn) {
                     acknowledged_sequences.insert(sequence);
                 }
             } else {
-                hole_times.append(sample.relative_time);
-                hole_sequences.append(sequence);
-                d_->hole_anchor_indexes.append(anchor_index);
-                if (sequence >= greatest_ssn &&
-                    !acknowledged_sequences.contains(sequence) &&
-                    !active_holes.contains(sequence)) {
-                    PersistentHoleTrack track;
-                    track.first_frame_number = sample.frame_number;
-                    track.first_relative_time = sample.relative_time;
-                    track.last_zero_anchor_index = anchor_index;
-                    track.last_zero_frame_number = sample.frame_number;
-                    track.last_zero_relative_time = sample.relative_time;
-                    track.ba_count = 1;
-                    active_holes.insert(sequence, track);
+                if (previously_set_sequences.contains(sequence)) {
+                    previously_set_zero_times.append(sample.relative_time);
+                    previously_set_zero_sequences.append(sequence);
+                    d_->previously_set_zero_anchor_indexes.append(anchor_index);
+                } else {
+                    hole_times.append(sample.relative_time);
+                    hole_sequences.append(sequence);
+                    d_->hole_anchor_indexes.append(anchor_index);
+                    if (sequence >= greatest_ssn &&
+                        !acknowledged_sequences.contains(sequence) &&
+                        !active_holes.contains(sequence)) {
+                        PersistentHoleTrack track;
+                        track.first_frame_number = sample.frame_number;
+                        track.first_relative_time = sample.relative_time;
+                        track.last_zero_anchor_index = anchor_index;
+                        track.last_zero_frame_number = sample.frame_number;
+                        track.last_zero_relative_time = sample.relative_time;
+                        track.ba_count = 1;
+                        active_holes.insert(sequence, track);
+                    }
                 }
             }
         }
+    }
+
+    while (agreement_events && agreement_event_index < agreement_events->size()) {
+        const AgreementEvent &event = agreement_events->at(agreement_event_index);
+        PersistentHoleOutcome outcome = event.type == AgreementEventType::Started
+                ? PersistentHoleOutcome::AgreementStarted
+                : PersistentHoleOutcome::AgreementEnded;
+        reset_ack_analysis(outcome, event.frame_number);
+        agreement_event_index++;
     }
 
     const QList<int> active_sequences = active_holes.keys();
@@ -1556,6 +1775,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->mpdu_graph->setData(mpdu_times, mpdu_sequences, true);
     d_->window_upper_graph->setData(window_upper_times, window_upper_sequences, true);
     d_->set_graph->setData(set_times, set_sequences, true);
+    d_->previously_set_zero_graph->setData(
+                previously_set_zero_times, previously_set_zero_sequences, true);
     d_->hole_graph->setData(hole_times, hole_sequences, true);
     d_->persistent_hole_graph->setData(
                 persistent_hole_end_times, persistent_hole_sequences, true);
@@ -1570,6 +1791,7 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->persistent_hole_graph->setVisible(show_persistent_holes);
     d_->persistent_hole_error_bars->setVisible(show_persistent_holes);
     d_->set_graph->setVisible(d_->show_bitmap_set->isChecked());
+    d_->previously_set_zero_graph->setVisible(d_->show_holes->isChecked());
     d_->hole_graph->setVisible(d_->show_holes->isChecked());
     if (d_->show_time_deltas->isChecked()) {
         drawTimeDeltaLabels();
@@ -1634,10 +1856,10 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
                 tr("%1 session(s) available · X-axis duration: %2 · "
                    "In view: %3 BA / %4 BAR · %5 captured QoS Data MPDU(s) · "
                    "%6 bitmap-set position(s) · %7 bitmap hole(s) · "
-                   "%8 persistent-hole lifetime(s) · "
-                   "%9 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "Capture totals: %10/%11 unsupported BA/BAR · "
-                   "%12/%13 malformed BA/BAR")
+                   "%8 prior-set zero(s) · %9 persistent-hole lifetime(s) · "
+                   "%10 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "Capture totals: %11/%12 unsupported BA/BAR · "
+                   "%13/%14 malformed BA/BAR")
                 .arg(d_->sessions.size())
                 .arg(durationLabel(key_range.size()))
                 .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
@@ -1645,6 +1867,8 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
                 .arg(graphPointCountInRange(d_->mpdu_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->set_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->hole_graph, key_range, value_range))
+                .arg(graphPointCountInRange(d_->previously_set_zero_graph,
+                                            key_range, value_range))
                 .arg(persistent_hole_count)
                 .arg(graphPointCountInRange(d_->advance_span_graph,
                                             key_range, value_range))
@@ -1860,6 +2084,15 @@ void WlanBlockAckGraphDialog::showPersistentHoleDetails(int data_index)
         outcome = tr("last covered here; BA frame %1 no longer covered this sequence")
                 .arg(span.terminal_frame_number);
         break;
+    case PersistentHoleOutcome::AgreementStarted:
+        outcome = tr("last covered here; successful ADDBA response frame %1 began a new "
+                     "agreement")
+                .arg(span.terminal_frame_number);
+        break;
+    case PersistentHoleOutcome::AgreementEnded:
+        outcome = tr("last covered here; DELBA frame %1 ended the agreement")
+                .arg(span.terminal_frame_number);
+        break;
     case PersistentHoleOutcome::EpochReset:
         outcome = tr("last covered here; BA frame %1 began a new analysis epoch")
                 .arg(span.terminal_frame_number);
@@ -1910,6 +2143,10 @@ int WlanBlockAckGraphDialog::anchorIndexForPlottable(
     }
     if (plottable == d_->set_graph && data_index < d_->set_anchor_indexes.size()) {
         return d_->set_anchor_indexes.at(data_index);
+    }
+    if (plottable == d_->previously_set_zero_graph &&
+        data_index < d_->previously_set_zero_anchor_indexes.size()) {
+        return d_->previously_set_zero_anchor_indexes.at(data_index);
     }
     if (plottable == d_->hole_graph && data_index < d_->hole_anchor_indexes.size()) {
         return d_->hole_anchor_indexes.at(data_index);
@@ -1978,6 +2215,7 @@ void WlanBlockAckGraphDialog::bitmapSetToggled(bool checked)
 
 void WlanBlockAckGraphDialog::bitmapHolesToggled(bool checked)
 {
+    d_->previously_set_zero_graph->setVisible(checked);
     d_->hole_graph->setVisible(checked);
     d_->plot->replot();
 }
@@ -2145,6 +2383,7 @@ void WlanBlockAckGraphDialog::resetAxes()
     const QVector<QCPGraph *> value_graphs = {
         d_->anchor_graph, d_->request_graph, d_->window_upper_graph,
         d_->show_bitmap_set->isChecked() ? d_->set_graph : nullptr,
+        d_->show_holes->isChecked() ? d_->previously_set_zero_graph : nullptr,
         d_->show_holes->isChecked() ? d_->hole_graph : nullptr,
         d_->show_persistent_holes->isChecked() ? d_->persistent_hole_graph : nullptr,
         d_->show_ack_gaps->isChecked() ? d_->advance_span_graph : nullptr,

@@ -247,7 +247,8 @@
               <span class="key" style="color:var(--orange)"><span class="swatch"></span>BA window upper bound</span>
               <span class="key" style="color:var(--purple)"><span class="swatch"></span>BAR triangle</span>
               <span class="key" style="color:var(--green)"><span class="swatch"></span>Bitmap-set dot</span>
-              <span class="key" style="color:var(--red)"><span class="swatch"></span>Bitmap-hole cross</span>
+              <span class="key" style="color:var(--green)"><span class="swatch"></span>Prior-set zero cross</span>
+              <span class="key" style="color:var(--red)"><span class="swatch"></span>Zero-without-prior-set cross</span>
               <span class="key" style="color:var(--dark-red)"><span class="swatch"></span>Persistent-hole span</span>
               <span class="key" style="color:var(--gold)"><span class="swatch"></span>Captured MPDU diamond</span>
               <span class="key" style="color:var(--graphite)"><span class="swatch"></span>No-BA-ACK gap dot</span>
@@ -259,7 +260,7 @@
     </section>
 
     <section aria-labelledby="screens-heading">
-      <h2 id="screens-heading">Three real scenarios</h2>
+      <h2 id="screens-heading">Three real scenario screenshots</h2>
       <div class="shots">
         <figure>
           <img src="wsug_src/images/ws-wlan-ba-real-normal.png" width="1800" height="1000" loading="lazy" alt="Sanitized real-data graph showing advancing blue BA steps, purple BAR triangles, gold MPDU diamonds, green bitmap-set dots, SSN labels, and BA time deltas.">
@@ -297,7 +298,7 @@
         </article>
         <article class="feature">
           <h3>Bitmap holes and persistent aging</h3>
-          <p>Red crosses are zero positions before the highest set position in one BA; trailing zeros are not plotted. A dark-red span means the position remained zero across at least two consecutive covering BAs. Its square endpoint reports age and outcome. The holes screenshot shows both layers.</p>
+          <p>Crosses are zero positions before the highest set position in one BA; trailing zeros are not plotted. A green cross means an earlier BA explicitly set that sequence in the same agreement. A red cross means the graph has no earlier observed set-bit evidence for it. Successful ADDBA responses, DELBA frames, and inferred analysis-epoch resets clear that history. Neither color proves transmission or loss. A dark-red span means a red position remained zero across at least two consecutive covering BAs. Its square endpoint reports age and outcome. Select <strong>Prior-set zero crosses</strong> in the interactive graph to compare both cross colors; the holes screenshot shows the red and persistent layers.</p>
         </article>
         <article class="feature">
           <h3>No BA ACK before SSN advance</h3>
@@ -331,7 +332,7 @@
             <tr><td>Captured MPDUs</td><td>Off</td><td>Adds gold reverse-direction QoS Data diamonds.</td></tr>
             <tr><td>Persistent-hole aging</td><td>Off</td><td>Adds dark-red lifetimes and selectable endpoints.</td></tr>
             <tr><td>Bitmap set</td><td>On</td><td>Shows or hides green set-position dots only.</td></tr>
-            <tr><td>Bitmap holes</td><td>Off</td><td>Adds red crosses for zeros before the highest set position.</td></tr>
+            <tr><td>Bitmap holes</td><td>Off</td><td>Adds green crosses for zeros set by an earlier BA in the agreement and red crosses for zeros without prior set evidence.</td></tr>
             <tr><td>Viewport summary</td><td>Automatic</td><td>Tracks duration and all underlying in-range counts, even for hidden optional layers.</td></tr>
           </tbody>
         </table>
@@ -361,6 +362,8 @@
             <tr><td>Verified</td><td>Wrap excerpt replay</td><td>20 BA responses; SSNs progress 4086…4095, 0…10 while the plotted sequence stays continuous.</td></tr>
             <tr><td>Verified</td><td>BA pair ranking</td><td>The supplied capture sorts the 1,171-BA pair before the reverse 1,046-BA pair; the latter total equals 1,042 BAs on TID 0 plus 4 on TID 7.</td></tr>
             <tr><td>Verified</td><td>TID ranking</td><td>A second real-capture pair sorts TID 6 with 2 BAs before TID 0 with 1 BA, reversing numeric TID order as required.</td></tr>
+            <tr><td>Verified</td><td>Prior-set zero classification</td><td>In the reported 21-BA viewport, the original 171 red zeros split into 48 green prior-set zeros and 123 red zeros. Frame 29438 alone splits 39 zeros into 13 green and 26 red.</td></tr>
+            <tr><td>Verified</td><td>Agreement-boundary retry handling</td><td>A second real capture contains 96 successful ADDBA responses and 112 DELBA frames including retries. Retry-aware signatures retain 61 and 59 boundaries respectively, including the first observed retry when its original frame is absent.</td></tr>
             <tr><td>Verified</td><td><code>cmake --build build --target wireshark -j4</code></td><td>Development Wireshark application compiled and linked with the graph changes.</td></tr>
             <tr><td>Verified</td><td><code>cmake --build build --target checkAPI_ui-qt -j4</code></td><td>Qt API-policy target passed; unrelated pre-existing notices did not fail the target.</td></tr>
             <tr><td>Source-verified</td><td>Interactive HTML behavior</td><td>Handlers and calculations for scenario switches, seven layer controls, selection, drag/pan, rectangle zoom, wheel/keyboard zoom, reset, live counts, and duration are present. Browser-driven QA was unavailable in this session.</td></tr>
@@ -2688,6 +2691,42 @@
         "passed by SSN"
       ]
     ]
+  },
+  {
+    "id": "prior-set-zeros",
+    "title": "Prior-set zero crosses",
+    "summary": "Two compressed TID 0 BAs, source frames 29412 and 29438: 13 sequences set by the first bitmap are zero 40.884 ms later. Both source frames failed FCS, so this example demonstrates prior-set classification, not trustworthy acknowledgment or loss evidence.",
+    "duration": 0.08,
+    "verified": {
+      "ba": 2,
+      "bar": 0,
+      "mpdu": 0,
+      "set": 25,
+      "hole": 45,
+      "prior": 13,
+      "gap": 0,
+      "span": 0
+    },
+    "ba": [
+      [
+        0.018487,
+        1847,
+        1847,
+        1911,
+        "a1628e2c01000000"
+      ],
+      [
+        0.059371,
+        1850,
+        1850,
+        1914,
+        "010000401b590200"
+      ]
+    ],
+    "bar": [],
+    "mpdu": [],
+    "gap": [],
+    "span": []
   }
 ]</script>
   <script>
@@ -2748,10 +2787,16 @@
       return bits;
     }
     function generate(caseData) {
-      const bitmap = caseData.ba.flatMap(bitmapPoints);
-      const sets = bitmap.filter(point => point.set);
-      const holes = bitmap.filter(point => !point.set);
-      return { sets, holes };
+      const sets = [], holes = [], priorSetZeros = [], priorSets = new Set();
+      caseData.ba.forEach(sample => {
+        const points = bitmapPoints(sample);
+        points.filter(point => point.set).forEach(point => sets.push(point));
+        points.filter(point => !point.set).forEach(point => {
+          (priorSets.has(point.seq) ? priorSetZeros : holes).push(point);
+        });
+        points.filter(point => point.set).forEach(point => priorSets.add(point.seq));
+      });
+      return { sets, holes, priorSetZeros };
     }
     function allY(caseData) {
       const values = [];
@@ -2761,6 +2806,7 @@
       caseData.gap.forEach(item => values.push(item[1]));
       caseData.span.forEach(item => values.push(item[2]));
       generated.sets.forEach(item => values.push(item.seq));
+      generated.priorSetZeros.forEach(item => values.push(item.seq));
       generated.holes.forEach(item => values.push(item.seq));
       return values;
     }
@@ -2837,13 +2883,22 @@
         interactive(point, `Bitmap-set position ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · unwrapped ${item.seq}.`);
         root.append(point);
       });
+      if (layer('holes')) generated.priorSetZeros.forEach((item, index) => {
+        if (!inView(item.t, item.seq)) return;
+        const px = x(item.t), py = y(item.seq);
+        const group = el('g', { stroke: colors.green, 'stroke-width': 1.7 });
+        group.append(el('line', { x1: px - 3, y1: py - 3, x2: px + 3, y2: py + 3 }));
+        group.append(el('line', { x1: px + 3, y1: py - 3, x2: px - 3, y2: py + 3 }));
+        interactive(group, `Prior-set zero ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · set by an earlier BA in this agreement, zero in this BA.`);
+        root.append(group);
+      });
       if (layer('holes')) generated.holes.forEach((item, index) => {
         if (!inView(item.t, item.seq)) return;
         const px = x(item.t), py = y(item.seq);
         const group = el('g', { stroke: colors.red, 'stroke-width': 1.7 });
         group.append(el('line', { x1: px - 3, y1: py - 3, x2: px + 3, y2: py + 3 }));
         group.append(el('line', { x1: px + 3, y1: py - 3, x2: px - 3, y2: py + 3 }));
-        interactive(group, `Bitmap hole ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · not acknowledged in this BA.`);
+        interactive(group, `Bitmap hole ${index + 1}: ${duration(item.t)} · sequence ${wrap(item.seq)} · zero in this BA with no earlier set-bit evidence in this agreement.`);
         root.append(group);
       });
       if (layer('gaps')) c.gap.forEach((item, index) => {
@@ -2875,6 +2930,7 @@
         bar: c.bar.filter(item => inView(item[0], item[2])).length,
         mpdu: c.mpdu.filter(item => inView(item[0], item[2])).length,
         set: generated.sets.filter(item => inView(item.t, item.seq)).length,
+        prior: generated.priorSetZeros.filter(item => inView(item.t, item.seq)).length,
         hole: generated.holes.filter(item => inView(item.t, item.seq)).length,
         span: c.span.filter(item => item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1).length,
         gap: c.gap.filter(item => inView(item[0], item[1])).length
@@ -2882,7 +2938,7 @@
     }
     function updateSummary(c) {
       const n = counts(c);
-      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots.`;
+      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots.`;
     }
     function updateTable(c) {
       const events = [];
@@ -2932,11 +2988,16 @@
       generated = generate(c);
       scenarioCopy.textContent = c.summary;
       document.querySelectorAll('[data-scenario]').forEach((button, i) => button.setAttribute('aria-pressed', i === index ? 'true' : 'false'));
-      const presetLayers = index === 0
-        ? { labels: true, deltas: true, gaps: false, mpdus: true, persistent: false, set: true, holes: false }
-        : index === 1
-          ? { labels: false, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true }
-          : { labels: true, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true };
+      let presetLayers;
+      if (c.id === 'normal-burst') {
+        presetLayers = { labels: true, deltas: true, gaps: false, mpdus: true, persistent: false, set: true, holes: false };
+      } else if (c.id === 'persistent-holes') {
+        presetLayers = { labels: false, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true };
+      } else if (c.id === 'prior-set-zeros') {
+        presetLayers = { labels: true, deltas: true, gaps: false, mpdus: false, persistent: false, set: true, holes: true };
+      } else {
+        presetLayers = { labels: true, deltas: false, gaps: false, mpdus: true, persistent: true, set: true, holes: true };
+      }
       for (const [name, checked] of Object.entries(presetLayers)) document.getElementById(`layer-${name}`).checked = checked;
       detail.textContent = 'Select a plotted marker for details. Scenario data is sanitized and time-normalized.';
       resetView();
