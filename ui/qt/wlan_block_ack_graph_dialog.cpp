@@ -1063,6 +1063,64 @@ WlanBlockAckGraphDialog::~WlanBlockAckGraphDialog()
     delete d_;
 }
 
+bool WlanBlockAckGraphDialog::canFollowPacket(epan_dissect *edt)
+{
+    if (!edt || !edt->tree ||
+        !edt->pi.dl_src.data || edt->pi.dl_src.len != FT_ETHER_LEN ||
+        !edt->pi.dl_dst.data || edt->pi.dl_dst.len != FT_ETHER_LEN) {
+        return false;
+    }
+
+    QVector<uint32_t> subtypes = unsignedFieldValues(
+                edt, fieldIdsByName("wlan.fc.type_subtype"));
+    bool is_request = subtypes.contains(0x0018);
+    bool is_response = subtypes.contains(0x0019);
+    if (is_request == is_response) {
+        return false;
+    }
+
+    QVector<uint32_t> types = unsignedFieldValues(
+                edt, fieldIdsByName("wlan.ba.control.ba_type"));
+    QVector<uint32_t> starting_sequences = unsignedFieldValues(
+                edt, fieldIdsByName("wlan.fixed.ssc.sequence"));
+    if (types.isEmpty()) {
+        return false;
+    }
+
+    uint32_t type = types.first();
+    if (type != basic_block_ack && type != extended_compressed_block_ack &&
+        type != compressed_block_ack && type != multi_tid_block_ack) {
+        return false;
+    }
+
+    QVector<uint32_t> tids = type == multi_tid_block_ack
+            ? unsignedFieldValues(
+                  edt, fieldIdsByName("wlan.bar.mtid.tidinfo.value"))
+            : unsignedFieldValues(
+                  edt, fieldIdsByName("wlan.ba.basic.tidinfo"));
+    if (type != multi_tid_block_ack && tids.size() > 1) {
+        tids.resize(1);
+    }
+    if (tids.isEmpty() || tids.size() != starting_sequences.size()) {
+        return false;
+    }
+    if (is_request) {
+        return true;
+    }
+
+    QVector<QByteArray> bitmaps = byteFieldValues(
+                edt, fieldIdsByName("wlan.ba.bm"));
+    if (tids.size() != bitmaps.size()) {
+        return false;
+    }
+    for (const QByteArray &bitmap : bitmaps) {
+        if (validBitmapSize(type, static_cast<int>(bitmap.size()))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void WlanBlockAckGraphDialog::tapReset(void *dialog_ptr)
 {
     WlanBlockAckGraphDialog *dialog = static_cast<WlanBlockAckGraphDialog *>(dialog_ptr);

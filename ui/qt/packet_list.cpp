@@ -54,7 +54,6 @@
 #include <ui/qt/utils/wireshark_mime_data.h>
 #include <ui/qt/widgets/drag_label.h>
 #include <ui/qt/filter_action.h>
-#include <ui/qt/follow_stream_action.h>
 #include <ui/qt/decode_as_dialog.h>
 #include <ui/qt/wireshark_main_window.h>
 
@@ -715,7 +714,7 @@ void PacketList::contextMenuEvent(QContextMenuEvent *event)
     if (main_menu_item) {
         submenu = new QMenu(main_menu_item->title(), ctx_menu);
         ctx_menu->addMenu(submenu);
-        foreach (FollowStreamAction *follow_action, main_menu_item->findChildren<FollowStreamAction *>()) {
+        foreach (QAction *follow_action, main_menu_item->actions()) {
             /* XXX: We could, like the prefs above, walk the protocols/layers
              * and add the follow actions in the order they appear in the packet.
              */

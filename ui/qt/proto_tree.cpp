@@ -26,7 +26,6 @@
 #include <ui/qt/widgets/wireshark_file_dialog.h>
 #include <ui/qt/show_packet_bytes_dialog.h>
 #include <ui/qt/filter_action.h>
-#include <ui/qt/follow_stream_action.h>
 #include <ui/qt/main_window.h>
 #include <ui/qt/io_graph_action.h>
 #include <ui/qt/plot_action.h>
@@ -320,7 +319,7 @@ void ProtoTree::contextMenuEvent(QContextMenuEvent *event)
         if (main_menu_item) {
             submenu = new QMenu(main_menu_item->title(), ctx_menu);
             ctx_menu->addMenu(submenu);
-            foreach (FollowStreamAction *follow_action, main_menu_item->findChildren<FollowStreamAction *>()) {
+            foreach (QAction *follow_action, main_menu_item->actions()) {
                 if (follow_action->isEnabled()) {
                     submenu->addAction(follow_action);
                 }

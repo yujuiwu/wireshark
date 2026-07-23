@@ -1208,6 +1208,7 @@ void WiresharkMainWindow::setMenusForSelectedPacket()
 {
     bool is_ip = false, is_tcp = false, is_udp = false, is_sctp = false, is_tls = false, is_rtp = false, is_lte_rlc = false,
              is_quic = false, is_exported_pdu = false;
+    bool can_follow_wlan_block_ack = false;
 
     /* Making the menu context-sensitive allows for easier selection of the
        desired item and has the added benefit, with large captures, of
@@ -1275,6 +1276,9 @@ void WiresharkMainWindow::setMenusForSelectedPacket()
 
         if (capture_file_.capFile()->edt && ! multi_selection && frame_selected)
         {
+            can_follow_wlan_block_ack =
+                    WlanBlockAckGraphDialog::canFollowPacket(
+                        capture_file_.capFile()->edt);
             proto_get_frame_protocols(capture_file_.capFile()->edt->pi.layers,
                                       &is_ip, &is_tcp, &is_udp, &is_sctp,
                                       &is_tls, &is_rtp, &is_lte_rlc);
@@ -1304,6 +1308,8 @@ void WiresharkMainWindow::setMenusForSelectedPacket()
             }
         }
     }
+    main_ui_->actionFollowWlanBlockAckGraph->setEnabled(
+                can_follow_wlan_block_ack);
 
     main_ui_->actionCopyListAsText->setEnabled(selectedRows().count() > 0);
     main_ui_->actionCopyListAsCSV->setEnabled(selectedRows().count() > 0);
@@ -4009,12 +4015,16 @@ void WiresharkMainWindow::connectWirelessMenuActions()
     connect(main_ui_->actionWirelessWlanStatistics, &QAction::triggered, this, [=]() { statCommandWlanStatistics(NULL, NULL); });
     connect(main_ui_->actionWirelessWlanConnectionTimeline, &QAction::triggered,
             this, [=]() { statCommandWlanConnectionTimeline(NULL, NULL); });
-    connect(main_ui_->actionWirelessWlanBlockAckGraph, &QAction::triggered, this, [=]() {
+    auto open_wlan_block_ack_graph = [this]() {
         WlanBlockAckGraphDialog *dialog = new WlanBlockAckGraphDialog(*this, capture_file_);
         connect(dialog, &WlanBlockAckGraphDialog::goToPacket,
                 this, [=](int packet_num) { packet_list_->goToPacket(packet_num); });
         dialog->show();
-    });
+    };
+    connect(main_ui_->actionWirelessWlanBlockAckGraph, &QAction::triggered,
+            this, open_wlan_block_ack_graph);
+    connect(main_ui_->actionFollowWlanBlockAckGraph, &QAction::triggered,
+            this, open_wlan_block_ack_graph, Qt::QueuedConnection);
 }
 
 // Tools Menu

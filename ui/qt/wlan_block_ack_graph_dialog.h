@@ -15,6 +15,7 @@
 class QCPAbstractPlottable;
 class QCPAbstractItem;
 class QMouseEvent;
+struct epan_dissect;
 
 class WlanBlockAckGraphDialog : public WiresharkDialog
 {
@@ -23,6 +24,8 @@ class WlanBlockAckGraphDialog : public WiresharkDialog
 public:
     explicit WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &cf);
     ~WlanBlockAckGraphDialog();
+
+    static bool canFollowPacket(struct epan_dissect *edt);
 
 signals:
     void goToPacket(int packet_num);

@@ -424,6 +424,7 @@
      <property name="title">
       <string>Follow</string>
      </property>
+     <addaction name="actionFollowWlanBlockAckGraph"/>
     </widget>
     <widget class="QMenu" name="menuConversationFilter">
      <property name="title">
@@ -3072,6 +3073,17 @@
    </property>
    <property name="toolTip">
     <string>Graph IEEE 802.11 Block Ack responses and requests by directional TA, RA, and TID session.</string>
+   </property>
+  </action>
+  <action name="actionFollowWlanBlockAckGraph">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>WLAN Block Ack Session Graph</string>
+   </property>
+   <property name="toolTip">
+    <string>Open the WLAN Block Ack Graph for the selected Block Ack response or request session.</string>
    </property>
   </action>
   <action name="actionNewDisplayFilterExpression">
