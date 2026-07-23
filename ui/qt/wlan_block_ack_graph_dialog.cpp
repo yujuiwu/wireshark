@@ -245,6 +245,7 @@ struct MpduSample {
     uint32_t frame_number = 0;
     double relative_time = 0.0;
     uint32_t sequence = 0;
+    bool retry = false;
 };
 
 enum class PersistentHoleOutcome {
@@ -574,6 +575,8 @@ public:
     QVector<int> request_sample_indexes;
     QVector<int> request_unwrapped_sequences;
     QVector<int> mpdu_unwrapped_sequences;
+    QVector<int> mpdu_sample_indexes;
+    QVector<int> retry_mpdu_sample_indexes;
     QVector<int> set_anchor_indexes;
     QVector<int> previously_set_zero_anchor_indexes;
     QVector<int> hole_anchor_indexes;
@@ -616,6 +619,7 @@ public:
     QCPGraph *bad_fcs_set_graph = nullptr;
     QCPGraph *bad_fcs_zero_graph = nullptr;
     QCPGraph *mpdu_graph = nullptr;
+    QCPGraph *retry_mpdu_graph = nullptr;
     QRubberBand *zoom_rubber_band = nullptr;
     QPoint zoom_origin;
 
@@ -696,7 +700,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_mpdus->setToolTip(
                 tr("Show captured QoS Data MPDU sequence numbers in the reverse data direction "
                    "(BA RA → BA TA) for the selected TID. Each captured A-MPDU subframe is "
-                   "plotted separately, including retransmissions."));
+                   "plotted separately. Filled gold diamonds have the Retry bit clear; "
+                   "hollow orange diamonds have the Retry bit set."));
     d_->show_persistent_holes = new QCheckBox(tr("Show persistent-hole aging"), this);
     d_->show_persistent_holes->setObjectName(
                 QStringLiteral("showPersistentHoleAgingCheckBox"));
@@ -759,9 +764,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "numbers for which no acknowledgment was observed before a later BA SSN "
                    "advanced "
                    "past them. Dark-red horizontal spans show persistent BA bitmap holes; click "
-                   "a square endpoint for its lifetime and resolution details. Gold diamonds "
-                   "show captured reverse-direction QoS Data MPDUs; they do not affect the "
-                   "Block Ack analysis. When bitmap holes are enabled, green crosses mark "
+                   "a square endpoint for its lifetime and resolution details. Filled gold "
+                   "diamonds show captured reverse-direction QoS Data MPDUs with the Retry "
+                   "bit clear; hollow orange diamonds show those with the Retry bit set. "
+                   "Captured MPDUs do not affect the Block Ack analysis. When bitmap holes "
+                   "are enabled, green crosses mark "
                    "zeros for positions set by an earlier BA in the same agreement; red "
                    "crosses mark positions without an earlier observed set. BA points and "
                    "bitmap positions explicitly reported with an FCS error are overlaid "
@@ -810,12 +817,23 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
 
     d_->mpdu_graph = d_->plot->addGraph();
     d_->mpdu_graph->setObjectName(QStringLiteral("capturedMpduSequenceGraph"));
-    d_->mpdu_graph->setName(tr("Captured QoS Data MPDU sequence"));
+    d_->mpdu_graph->setName(tr("Captured QoS Data MPDU (Retry clear)"));
     d_->mpdu_graph->setLineStyle(QCPGraph::lsNone);
     d_->mpdu_graph->setScatterStyle(
                 QCPScatterStyle(QCPScatterStyle::ssDiamond, QColor(tango_butter_6),
                                 QColor(tango_butter_3), 7));
     d_->mpdu_graph->setSelectable(QCP::stSingleData);
+
+    d_->retry_mpdu_graph = d_->plot->addGraph();
+    d_->retry_mpdu_graph->setObjectName(
+                QStringLiteral("capturedRetryMpduSequenceGraph"));
+    d_->retry_mpdu_graph->setName(tr("Captured QoS Data MPDU (Retry set)"));
+    d_->retry_mpdu_graph->setLineStyle(QCPGraph::lsNone);
+    d_->retry_mpdu_graph->setScatterStyle(
+                QCPScatterStyle(QCPScatterStyle::ssDiamond,
+                                QPen(QColor(tango_orange_5), 1.75),
+                                QBrush(Qt::NoBrush), 9));
+    d_->retry_mpdu_graph->setSelectable(QCP::stSingleData);
 
     d_->window_upper_graph = d_->plot->addGraph();
     d_->window_upper_graph->setObjectName(QStringLiteral("baWindowUpperBoundGraph"));
@@ -1308,10 +1326,11 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
     if (is_qos_data && !is_request && !is_response) {
         QVector<uint32_t> tids = unsignedFieldValues(edt, d->hf_qos_tid);
         QVector<uint32_t> sequences = unsignedFieldValues(edt, d->hf_mpdu_sequence);
+        QVector<bool> retries = booleanFieldValues(edt, d->hf_retry);
         QString data_ta = etherFieldValue(edt, d->hf_ta);
         QString data_ra = etherFieldValue(edt, d->hf_ra);
         if (data_ta.isEmpty() || data_ra.isEmpty() ||
-            tids.size() != 1 || sequences.size() != 1) {
+            tids.size() != 1 || sequences.size() != 1 || retries.size() != 1) {
             return TAP_PACKET_DONT_REDRAW;
         }
 
@@ -1319,6 +1338,7 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
         sample.frame_number = pinfo->num;
         sample.relative_time = nstime_to_sec(&pinfo->rel_ts);
         sample.sequence = sequences.first() & 0x0fff;
+        sample.retry = retries.first();
 
         // QoS Data travels opposite to its Block Ack response. Normalize the
         // key to the BA TA → RA direction used by the session picker.
@@ -1685,6 +1705,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->data()->clear();
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->retry_mpdu_graph->data()->clear();
+    d_->retry_mpdu_graph->setSelection(QCPDataSelection());
     d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
     d_->previously_set_zero_graph->data()->clear();
@@ -1703,6 +1725,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->request_sample_indexes.clear();
     d_->request_unwrapped_sequences.clear();
     d_->mpdu_unwrapped_sequences.clear();
+    d_->mpdu_sample_indexes.clear();
+    d_->retry_mpdu_sample_indexes.clear();
     d_->set_anchor_indexes.clear();
     d_->previously_set_zero_anchor_indexes.clear();
     d_->hole_anchor_indexes.clear();
@@ -1774,6 +1798,8 @@ void WlanBlockAckGraphDialog::drawSession()
     QVector<double> request_sequences;
     QVector<double> mpdu_times;
     QVector<double> mpdu_sequences;
+    QVector<double> retry_mpdu_times;
+    QVector<double> retry_mpdu_sequences;
     QVector<double> window_upper_times;
     QVector<double> window_upper_sequences;
     QVector<double> set_times;
@@ -2110,7 +2136,8 @@ void WlanBlockAckGraphDialog::drawSession()
         uint32_t previous_mpdu_sequence = 0;
         int previous_mpdu_unwrapped = 0;
         bool have_previous_mpdu = false;
-        for (const MpduSample &mpdu : *mpdus) {
+        for (int mpdu_index = 0; mpdu_index < mpdus->size(); mpdu_index++) {
+            const MpduSample &mpdu = mpdus->at(mpdu_index);
             int unwrapped = static_cast<int>(mpdu.sequence);
             if (!d_->anchor_sample_indexes.isEmpty()) {
                 // Use the latest preceding BA so a later BA epoch cannot move
@@ -2138,8 +2165,15 @@ void WlanBlockAckGraphDialog::drawSession()
                                            previous_mpdu_unwrapped);
             }
 
-            mpdu_times.append(mpdu.relative_time);
-            mpdu_sequences.append(unwrapped);
+            if (mpdu.retry) {
+                retry_mpdu_times.append(mpdu.relative_time);
+                retry_mpdu_sequences.append(unwrapped);
+                d_->retry_mpdu_sample_indexes.append(mpdu_index);
+            } else {
+                mpdu_times.append(mpdu.relative_time);
+                mpdu_sequences.append(unwrapped);
+                d_->mpdu_sample_indexes.append(mpdu_index);
+            }
             d_->mpdu_unwrapped_sequences.append(unwrapped);
             previous_mpdu_sequence = mpdu.sequence;
             previous_mpdu_unwrapped = unwrapped;
@@ -2166,6 +2200,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->anchor_graph->setData(anchor_times, anchor_sequences, true);
     d_->request_graph->setData(request_times, request_sequences, true);
     d_->mpdu_graph->setData(mpdu_times, mpdu_sequences, true);
+    d_->retry_mpdu_graph->setData(
+                retry_mpdu_times, retry_mpdu_sequences, true);
     d_->window_upper_graph->setData(window_upper_times, window_upper_sequences, true);
     d_->set_graph->setData(set_times, set_sequences, true);
     d_->previously_set_zero_graph->setData(
@@ -2200,6 +2236,7 @@ void WlanBlockAckGraphDialog::drawSession()
                 !d_->displayed_agreement_events.isEmpty());
     d_->advance_span_graph->setVisible(d_->show_ack_gaps->isChecked());
     d_->mpdu_graph->setVisible(d_->show_mpdus->isChecked());
+    d_->retry_mpdu_graph->setVisible(d_->show_mpdus->isChecked());
     bool show_persistent_holes = d_->show_persistent_holes->isChecked() &&
             !d_->persistent_hole_spans.isEmpty();
     d_->show_persistent_holes->setEnabled(!d_->persistent_hole_spans.isEmpty());
@@ -2310,7 +2347,9 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
                 .arg(durationLabel(key_range.size()))
                 .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->request_graph, key_range, value_range))
-                .arg(graphPointCountInRange(d_->mpdu_graph, key_range, value_range))
+                .arg(graphPointCountInRange(d_->mpdu_graph, key_range, value_range) +
+                     graphPointCountInRange(d_->retry_mpdu_graph,
+                                            key_range, value_range))
                 .arg(agreement_action_count)
                 .arg(inferred_reset_count)
                 .arg(graphPointCountInRange(d_->set_graph, key_range, value_range))
@@ -2585,6 +2624,7 @@ void WlanBlockAckGraphDialog::showSampleDetails(int data_index)
 
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->retry_mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
     int bad_fcs_index = static_cast<int>(
                 d_->bad_fcs_anchor_indexes.indexOf(data_index));
@@ -2628,6 +2668,7 @@ void WlanBlockAckGraphDialog::showRequestDetails(int data_index)
     d_->anchor_graph->setSelection(QCPDataSelection());
     d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->retry_mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(
                 QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
@@ -2654,20 +2695,32 @@ void WlanBlockAckGraphDialog::showMpduDetails(int data_index)
     clearAgreementEventSelection();
     d_->details_label->setText(
                 tr("Frame %1 · Captured QoS Data MPDU · TA %2 → RA %3 · TID %4 · "
-                   "sequence %5 (unwrapped %6). Capture presence does not prove reception "
-                   "by the destination. Click an MPDU point to go to this frame.")
+                   "sequence %5 (unwrapped %6) · Retry bit %7. Capture presence does not "
+                   "prove reception by the destination. Click an MPDU point to go to this "
+                   "frame.")
                 .arg(mpdu.frame_number)
                 .arg(session.ra, session.ta)
                 .arg(session.tid)
                 .arg(mpdu.sequence)
-                .arg(d_->mpdu_unwrapped_sequences.at(data_index)));
+                .arg(d_->mpdu_unwrapped_sequences.at(data_index))
+                .arg(mpdu.retry ? tr("set") : tr("clear")));
 
     d_->anchor_graph->setSelection(QCPDataSelection());
     d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
-    d_->mpdu_graph->setSelection(
-                QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
+    int mpdu_graph_index = static_cast<int>(
+                d_->mpdu_sample_indexes.indexOf(data_index));
+    int retry_mpdu_graph_index = static_cast<int>(
+                d_->retry_mpdu_sample_indexes.indexOf(data_index));
+    d_->mpdu_graph->setSelection(mpdu_graph_index >= 0
+            ? QCPDataSelection(QCPDataRange(mpdu_graph_index,
+                                            mpdu_graph_index + 1))
+            : QCPDataSelection());
+    d_->retry_mpdu_graph->setSelection(retry_mpdu_graph_index >= 0
+            ? QCPDataSelection(QCPDataRange(retry_mpdu_graph_index,
+                                            retry_mpdu_graph_index + 1))
+            : QCPDataSelection());
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
@@ -2744,6 +2797,7 @@ void WlanBlockAckGraphDialog::showPersistentHoleDetails(int data_index)
     d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->retry_mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(
                 QCPDataSelection(QCPDataRange(data_index, data_index + 1)));
     d_->plot->replot(QCustomPlot::rpQueuedReplot);
@@ -2846,6 +2900,7 @@ void WlanBlockAckGraphDialog::showAgreementEventDetails(int event_index)
     d_->bad_fcs_anchor_graph->setSelection(QCPDataSelection());
     d_->request_graph->setSelection(QCPDataSelection());
     d_->mpdu_graph->setSelection(QCPDataSelection());
+    d_->retry_mpdu_graph->setSelection(QCPDataSelection());
     d_->persistent_hole_graph->setSelection(QCPDataSelection());
     clearAgreementEventSelection();
     if (event_index < d_->agreement_event_lines.size()) {
@@ -2938,6 +2993,7 @@ void WlanBlockAckGraphDialog::ackGapsToggled(bool checked)
 void WlanBlockAckGraphDialog::mpdusToggled(bool checked)
 {
     d_->mpdu_graph->setVisible(checked);
+    d_->retry_mpdu_graph->setVisible(checked);
     d_->plot->replot();
 }
 
@@ -3045,10 +3101,14 @@ void WlanBlockAckGraphDialog::plotClicked(QCPAbstractPlottable *plottable,
         data_index >= 0 && data_index < d_->persistent_hole_spans.size()) {
         showPersistentHoleDetails(data_index);
         sample_selected = true;
-    } else if (plottable == d_->mpdu_graph &&
-        data_index >= 0 && data_index < d_->mpdu_unwrapped_sequences.size()) {
-        showMpduDetails(data_index);
-        sample_selected = true;
+    } else if ((plottable == d_->mpdu_graph ||
+                plottable == d_->retry_mpdu_graph) && data_index >= 0) {
+        const QVector<int> &sample_indexes = plottable == d_->mpdu_graph
+                ? d_->mpdu_sample_indexes : d_->retry_mpdu_sample_indexes;
+        if (data_index < sample_indexes.size()) {
+            showMpduDetails(sample_indexes.at(data_index));
+            sample_selected = true;
+        }
     } else if (plottable == d_->request_graph &&
         data_index >= 0 && data_index < d_->request_sample_indexes.size()) {
         showRequestDetails(data_index);
@@ -3112,7 +3172,8 @@ void WlanBlockAckGraphDialog::zoomYAxis(bool in)
 void WlanBlockAckGraphDialog::resetAxes()
 {
     bool mpdus_visible = d_->show_mpdus->isChecked() &&
-            !d_->mpdu_graph->data()->isEmpty();
+            (!d_->mpdu_graph->data()->isEmpty() ||
+             !d_->retry_mpdu_graph->data()->isEmpty());
     bool agreement_events_visible = d_->show_agreement_events->isChecked() &&
             !d_->displayed_agreement_events.isEmpty();
     if (d_->anchor_graph->data()->isEmpty() &&
@@ -3128,7 +3189,8 @@ void WlanBlockAckGraphDialog::resetAxes()
     QCPRange x_range;
     const QVector<QCPGraph *> time_graphs = {
         d_->anchor_graph, d_->request_graph,
-        mpdus_visible ? d_->mpdu_graph : nullptr
+        mpdus_visible ? d_->mpdu_graph : nullptr,
+        mpdus_visible ? d_->retry_mpdu_graph : nullptr
     };
     for (QCPGraph *graph : time_graphs) {
         if (!graph) {
@@ -3182,7 +3244,8 @@ void WlanBlockAckGraphDialog::resetAxes()
         d_->show_holes->isChecked() ? d_->hole_graph : nullptr,
         d_->show_persistent_holes->isChecked() ? d_->persistent_hole_graph : nullptr,
         d_->show_ack_gaps->isChecked() ? d_->advance_span_graph : nullptr,
-        mpdus_visible ? d_->mpdu_graph : nullptr
+        mpdus_visible ? d_->mpdu_graph : nullptr,
+        mpdus_visible ? d_->retry_mpdu_graph : nullptr
     };
     for (QCPGraph *graph : value_graphs) {
         if (!graph) {
