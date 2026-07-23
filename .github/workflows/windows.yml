@@ -45,6 +45,7 @@ jobs:
         uses: microsoft/setup-msbuild@v3
         with:
           vs-version: '[17.0,18.0)'
+          msbuild-architecture: ${{ matrix.target }}
       - name: Set MSVC command prompt
         uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
