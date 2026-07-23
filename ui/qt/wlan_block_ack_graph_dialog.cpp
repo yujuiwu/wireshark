@@ -2332,24 +2332,33 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
             agreement_action_count++;
         }
     }
+    int retry_mpdu_count = graphPointCountInRange(
+                d_->retry_mpdu_graph, key_range, value_range);
+    int mpdu_count = retry_mpdu_count + graphPointCountInRange(
+                d_->mpdu_graph, key_range, value_range);
+    QString retry_rate = mpdu_count > 0
+            ? tr("%1%").arg(QLocale().toString(
+                                100.0 * retry_mpdu_count / mpdu_count, 'f', 1))
+            : tr("n/a");
 
     d_->status_label->setText(
                 tr("%1 session(s) available · X-axis duration: %2 · "
                    "In view: %3 BA / %4 BAR · %5 captured QoS Data MPDU(s) · "
-                   "%6 ADDBA/DELBA event(s) · %7 inferred SSN reset(s) · "
-                   "%8 bitmap-set position(s) · %9 bitmap hole(s) · "
-                   "%10 prior-set zero(s) · %11 persistent-hole lifetime(s) · "
-                   "%12 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "%13 explicit-FCS-error BA(s) · "
-                   "Capture totals: %14/%15 unsupported BA/BAR · "
-                   "%16/%17 malformed BA/BAR")
+                   "Observed MPDU retries: %6 / %5 (%7) · "
+                   "%8 ADDBA/DELBA event(s) · %9 inferred SSN reset(s) · "
+                   "%10 bitmap-set position(s) · %11 bitmap hole(s) · "
+                   "%12 prior-set zero(s) · %13 persistent-hole lifetime(s) · "
+                   "%14 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "%15 explicit-FCS-error BA(s) · "
+                   "Capture totals: %16/%17 unsupported BA/BAR · "
+                   "%18/%19 malformed BA/BAR")
                 .arg(d_->sessions.size())
                 .arg(durationLabel(key_range.size()))
                 .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->request_graph, key_range, value_range))
-                .arg(graphPointCountInRange(d_->mpdu_graph, key_range, value_range) +
-                     graphPointCountInRange(d_->retry_mpdu_graph,
-                                            key_range, value_range))
+                .arg(mpdu_count)
+                .arg(retry_mpdu_count)
+                .arg(retry_rate)
                 .arg(agreement_action_count)
                 .arg(inferred_reset_count)
                 .arg(graphPointCountInRange(d_->set_graph, key_range, value_range))
