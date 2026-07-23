@@ -674,8 +674,9 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_ssn_labels->setObjectName(QStringLiteral("showSsnLabelsCheckBox"));
     d_->show_ssn_labels->setChecked(false);
     d_->show_ssn_labels->setToolTip(
-                tr("Show the numeric starting sequence number (SSN) below each blue BA point. "
-                   "The blue BA starting-sequence trace remains visible."));
+                tr("Show the starting sequence number (SSN) and the number of set bitmap "
+                   "bits in parentheses below each blue BA point. The blue BA "
+                   "starting-sequence trace remains visible."));
     d_->show_time_deltas = new QCheckBox(tr("Show BA time deltas"), this);
     d_->show_time_deltas->setObjectName(QStringLiteral("showBaTimeDeltasCheckBox"));
     d_->show_time_deltas->setChecked(false);
@@ -1937,7 +1938,9 @@ void WlanBlockAckGraphDialog::drawSession()
                     QStringLiteral("baSsnLabel_%1").arg(sample.frame_number));
         ssn_label->position->setAxes(d_->plot->xAxis, d_->plot->yAxis);
         ssn_label->position->setCoords(sample.relative_time, unwrapped);
-        ssn_label->setText(QString::number(sample.starting_sequence));
+        ssn_label->setText(QStringLiteral("%1 (%2)")
+                           .arg(sample.starting_sequence)
+                           .arg(bitmapSetBitCount(sample)));
         ssn_label->setPositionAlignment(Qt::AlignHCenter | Qt::AlignTop);
         ssn_label->setTextAlignment(Qt::AlignHCenter);
         ssn_label->setPadding(QMargins(0, 5, 0, 0));
