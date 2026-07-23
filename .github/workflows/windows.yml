@@ -4,12 +4,28 @@ on: [push]
 
 jobs:
   windows:
-    name: Build & Test
-    runs-on: windows-2022
+    name: Build & Test (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x64
+            runner: windows-2022
+            qt_arch: win64_msvc2022_64
+            qt_dir: msvc2022_64
+            cmake_arch: x64
+            system_version: 10.0.20348.0
+          - target: arm64
+            runner: windows-11-arm
+            qt_arch: win64_msvc2022_arm64
+            qt_dir: msvc2022_arm64
+            cmake_arch: ARM64
+            system_version: 10.0.22621.0
+    runs-on: ${{ matrix.runner }}
     env:
-      PLATFORM: x64
+      PLATFORM: ${{ matrix.target }}
       WIRESHARK_BASE_DIR: C:\Development
-      CMAKE_PREFIX_PATH: D:\a\wireshark\Qt\6.8.3\msvc2022_64
+      CMAKE_PREFIX_PATH: D:\a\wireshark\Qt\6.8.3\${{ matrix.qt_dir }}
       WIRESHARK_VERSION_EXTRA: -GithubActionBuild
     steps:
       - name: Checkout
@@ -21,23 +37,23 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          arch: win64_msvc2022_64
+          arch: ${{ matrix.qt_arch }}
           version: 6.8.3
           modules: 'qt5compat'
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v3
         with:
-          vs-version: 17.13
+          vs-version: '[17.0,18.0)'
       - name: Set MSVC command prompt
         uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
-          arch: x64
+          arch: ${{ matrix.target }}
       - name: Mkdir
         run: mkdir build
       - name: Cmake
-        run: cmake -DCMAKE_SYSTEM_VERSION="10.0.20348.0" -A x64 ..
+        run: cmake -DCMAKE_SYSTEM_VERSION="${{ matrix.system_version }}" -A ${{ matrix.cmake_arch }} ..
         env:
-          PLATFORM: x64
+          PLATFORM: ${{ matrix.target }}
           WIRESHARK_BASE_DIR: C:/wireshark-libs
         working-directory: build
       - name: Build
@@ -66,5 +82,5 @@ jobs:
       - name: Upload Windows packages
         uses: actions/upload-artifact@v6
         with:
-          name: package
+          name: package-${{ matrix.target }}
           path: build/packaging/nsis/*exe
