@@ -840,8 +840,6 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->window_upper_graph->setName(tr("BA window upper bound (exclusive)"));
     d_->window_upper_graph->setLineStyle(QCPGraph::lsStepLeft);
     d_->window_upper_graph->setPen(QPen(QColor(tango_orange_4), 1.5));
-    d_->window_upper_graph->setScatterStyle(
-                QCPScatterStyle(QCPScatterStyle::ssDisc, QColor(tango_orange_4), 5));
     d_->window_upper_graph->setSelectable(QCP::stNone);
 
     d_->set_graph = d_->plot->addGraph();
