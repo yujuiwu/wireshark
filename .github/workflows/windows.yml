@@ -25,7 +25,7 @@ jobs:
     env:
       PLATFORM: ${{ matrix.target }}
       WIRESHARK_BASE_DIR: C:\Development
-      CMAKE_PREFIX_PATH: D:\a\wireshark\Qt\6.8.3\${{ matrix.qt_dir }}
+      CMAKE_PREFIX_PATH: ${{ github.workspace }}\..\Qt\6.8.3\${{ matrix.qt_dir }}
       WIRESHARK_VERSION_EXTRA: -GithubActionBuild
     steps:
       - name: Checkout
@@ -37,6 +37,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
+          dir: ${{ github.workspace }}\..
           arch: ${{ matrix.qt_arch }}
           version: 6.8.3
           modules: 'qt5compat'
