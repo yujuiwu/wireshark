@@ -508,6 +508,129 @@ static int bitmapSetBitCount(const BaSample &sample)
     return count;
 }
 
+struct BaViewMetrics {
+    double interval_sum = 0.0;
+    int interval_count = 0;
+    qint64 ssn_rise = 0;
+    double ssn_rise_elapsed = 0.0;
+};
+
+static BaViewMetrics calculateBaViewMetrics(
+        const QVector<BaSample> &samples,
+        const QVector<int> &sample_indexes,
+        const QVector<int> &unwrapped_sequences,
+        const QVector<AgreementEvent> &agreement_events,
+        const QCPRange &key_range,
+        const QCPRange &value_range)
+{
+    BaViewMetrics metrics;
+    qsizetype sample_count = std::min(sample_indexes.size(),
+                                      unwrapped_sequences.size());
+    qsizetype event_index = 0;
+    int analysis_epoch = 0;
+    int previous_epoch = -1;
+    int ssn_high_water = 0;
+    bool previous_visible = false;
+    qint64 run_ssn_rise = 0;
+    double run_elapsed = 0.0;
+    auto finish_rate_run = [&]() {
+        if (run_elapsed > 0.0) {
+            metrics.ssn_rise += run_ssn_rise;
+            metrics.ssn_rise_elapsed += run_elapsed;
+        }
+        run_ssn_rise = 0;
+        run_elapsed = 0.0;
+    };
+
+    for (qsizetype anchor_index = 0;
+         anchor_index < sample_count; anchor_index++) {
+        int sample_index = sample_indexes.at(anchor_index);
+        if (sample_index < 0 || sample_index >= samples.size()) {
+            finish_rate_run();
+            previous_visible = false;
+            continue;
+        }
+        const BaSample &sample = samples.at(sample_index);
+
+        while (event_index < agreement_events.size()) {
+            const AgreementEvent &event = agreement_events.at(event_index);
+            bool event_at_or_before_sample =
+                    event.relative_time < sample.relative_time ||
+                    (event.relative_time == sample.relative_time &&
+                     event.frame_number <= sample.frame_number);
+            if (!event_at_or_before_sample) {
+                break;
+            }
+            if (agreementEventResetsAnalysis(event.type)) {
+                analysis_epoch++;
+            }
+            event_index++;
+        }
+
+        int unwrapped_sequence = unwrapped_sequences.at(anchor_index);
+        bool visible = key_range.contains(sample.relative_time) &&
+                value_range.contains(unwrapped_sequence);
+        bool adjacent_visible = anchor_index > 0 && visible && previous_visible;
+        double interval = 0.0;
+        bool interval_is_ordered = false;
+        if (adjacent_visible) {
+            int previous_sample_index = sample_indexes.at(anchor_index - 1);
+            if (previous_sample_index >= 0 &&
+                previous_sample_index < samples.size()) {
+                interval = sample.relative_time -
+                        samples.at(previous_sample_index).relative_time;
+                if (interval >= 0.0) {
+                    metrics.interval_sum += interval;
+                    metrics.interval_count++;
+                    interval_is_ordered = true;
+                }
+            }
+        }
+
+        bool continues_visible_epoch = adjacent_visible &&
+                interval_is_ordered && analysis_epoch == previous_epoch;
+        if (!continues_visible_epoch) {
+            finish_rate_run();
+            if (visible) {
+                ssn_high_water = unwrapped_sequence;
+            }
+        } else {
+            run_elapsed += interval;
+            if (unwrapped_sequence > ssn_high_water) {
+                run_ssn_rise += unwrapped_sequence - ssn_high_water;
+            }
+            ssn_high_water = std::max(ssn_high_water, unwrapped_sequence);
+        }
+
+        previous_visible = visible;
+        previous_epoch = analysis_epoch;
+    }
+    finish_rate_run();
+
+    return metrics;
+}
+
+static QString sequenceRateLabel(double sequences_per_second)
+{
+    double scaled_rate = sequences_per_second;
+    QString prefix;
+    if (sequences_per_second >= 1.0e12) {
+        scaled_rate /= 1.0e12;
+        prefix = QStringLiteral("T");
+    } else if (sequences_per_second >= 1.0e9) {
+        scaled_rate /= 1.0e9;
+        prefix = QStringLiteral("G");
+    } else if (sequences_per_second >= 1.0e6) {
+        scaled_rate /= 1.0e6;
+        prefix = QStringLiteral("M");
+    } else if (sequences_per_second >= 1.0e3) {
+        scaled_rate /= 1.0e3;
+        prefix = QStringLiteral("k");
+    }
+    return QObject::tr("%1 %2seq/s")
+            .arg(QLocale().toString(scaled_rate, 'g', 3), prefix);
+}
+
 } // namespace
 
 class WlanBlockAckGraphDialog::Private
@@ -965,6 +1088,15 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->status_label = new QLabel(this);
     d_->status_label->setObjectName(QStringLiteral("blockAckStatusLabel"));
     d_->status_label->setWordWrap(true);
+    d_->status_label->setToolTip(
+                tr("Average BA Δt uses consecutive captured BA responses with both "
+                   "endpoints visible. The BA SSN rise rate additionally excludes "
+                   "intervals across accepted ADDBA responses, DELBA frames, or inferred "
+                   "SSN resets. Within each contiguous in-view epoch, the rate uses "
+                   "unwrapped SSNs and counts only new high-water-mark advancement, so "
+                   "stale or backward BAs do not count as negative progress or cause their "
+                   "recovery to be counted twice. Explicit-FCS-error BAs remain included "
+                   "because they are plotted in the view."));
     main_layout->addWidget(d_->status_label);
 
     QHBoxLayout *mouse_layout = new QHBoxLayout;
@@ -2304,12 +2436,26 @@ void WlanBlockAckGraphDialog::drawSession()
 
 void WlanBlockAckGraphDialog::updateGraphSummary()
 {
-    if (currentSessionIndex() < 0) {
+    int session_index = currentSessionIndex();
+    if (session_index < 0) {
         return;
     }
 
     const QCPRange key_range = d_->plot->xAxis->range();
     const QCPRange value_range = d_->plot->yAxis->range();
+    const BaSession &session = d_->sessions.at(session_index);
+    BaViewMetrics view_metrics = calculateBaViewMetrics(
+                session.samples, d_->anchor_sample_indexes,
+                d_->anchor_unwrapped_sequences,
+                d_->displayed_agreement_events, key_range, value_range);
+    QString average_ba_delta = view_metrics.interval_count > 0
+            ? durationLabel(view_metrics.interval_sum /
+                            view_metrics.interval_count)
+            : tr("n/a");
+    QString average_ssn_rise_rate = view_metrics.ssn_rise_elapsed > 0.0
+            ? sequenceRateLabel(view_metrics.ssn_rise /
+                                view_metrics.ssn_rise_elapsed)
+            : tr("n/a");
     int persistent_hole_count = 0;
     for (const PersistentHoleSpan &span : d_->persistent_hole_spans) {
         if (value_range.contains(span.unwrapped_sequence) &&
@@ -2341,19 +2487,23 @@ void WlanBlockAckGraphDialog::updateGraphSummary()
 
     d_->status_label->setText(
                 tr("%1 session(s) available · X-axis duration: %2 · "
-                   "In view: %3 BA / %4 BAR · %5 captured QoS Data MPDU(s) · "
-                   "Observed MPDU retries: %6 / %5 (%7) · "
-                   "%8 ADDBA/DELBA event(s) · %9 inferred SSN reset(s) · "
-                   "%10 bitmap-set position(s) · %11 bitmap hole(s) · "
-                   "%12 prior-set zero(s) · %13 persistent-hole lifetime(s) · "
-                   "%14 no-BA-ACK-before-SSN-advance dot(s) · "
-                   "%15 explicit-FCS-error BA(s) · "
-                   "Capture totals: %16/%17 unsupported BA/BAR · "
-                   "%18/%19 malformed BA/BAR")
+                   "In view: %3 BA / %4 BAR · Avg BA Δt: %5 · "
+                   "Avg BA SSN rise rate: %6 · "
+                   "%7 captured QoS Data MPDU(s) · "
+                   "Observed MPDU retries: %8 / %7 (%9) · "
+                   "%10 ADDBA/DELBA event(s) · %11 inferred SSN reset(s) · "
+                   "%12 bitmap-set position(s) · %13 bitmap hole(s) · "
+                   "%14 prior-set zero(s) · %15 persistent-hole lifetime(s) · "
+                   "%16 no-BA-ACK-before-SSN-advance dot(s) · "
+                   "%17 explicit-FCS-error BA(s) · "
+                   "Capture totals: %18/%19 unsupported BA/BAR · "
+                   "%20/%21 malformed BA/BAR")
                 .arg(d_->sessions.size())
                 .arg(durationLabel(key_range.size()))
                 .arg(graphPointCountInRange(d_->anchor_graph, key_range, value_range))
                 .arg(graphPointCountInRange(d_->request_graph, key_range, value_range))
+                .arg(average_ba_delta)
+                .arg(average_ssn_rise_rate)
                 .arg(mpdu_count)
                 .arg(retry_mpdu_count)
                 .arg(retry_rate)
