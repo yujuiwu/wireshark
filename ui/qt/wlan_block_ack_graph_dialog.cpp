@@ -986,6 +986,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     sequence_ticker->setScaleStrategy(QCPAxisTickerFixed::ssMultiples);
     d_->plot->yAxis->setTicker(sequence_ticker);
     d_->plot->legend->setVisible(true);
+    d_->plot->axisRect()->insetLayout()->setInsetAlignment(
+                0, Qt::AlignRight | Qt::AlignBottom);
     main_layout->addWidget(d_->plot, 1);
 
     d_->anchor_graph = d_->plot->addGraph();
