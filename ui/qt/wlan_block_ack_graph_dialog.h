@@ -48,6 +48,7 @@ private:
     void populateTids(int preferred_session = -1, int preferred_tid = -1);
     int currentSessionIndex() const;
     void drawSession();
+    void updateLabelHighlights();
     void updateGraphSummary();
     void clearTimeDeltaLabels();
     void drawTimeDeltaLabels();
@@ -69,6 +70,7 @@ private slots:
     void tidChanged(int tid_index);
     void ssnLabelsToggled(bool checked);
     void timeDeltasToggled(bool checked);
+    void labelHighlightsToggled(bool checked);
     void ackGapsToggled(bool checked);
     void mpdusToggled(bool checked);
     void persistentHolesToggled(bool checked);
