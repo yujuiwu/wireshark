@@ -855,10 +855,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_ssn_labels->setObjectName(QStringLiteral("showSsnLabelsCheckBox"));
     d_->show_ssn_labels->setChecked(false);
     d_->show_ssn_labels->setToolTip(
-                tr("Show the starting sequence number (SSN) and the number of set bitmap "
-                   "bits in parentheses below each blue BA point. The blue BA "
-                   "starting-sequence trace remains visible. When above-average highlighting "
-                   "is enabled, the destination BA label for an SSN rise rate above the "
+                tr("Show each BA window as [SSN, SSN + bitmap length) below its blue BA "
+                   "point. Both endpoints use 12-bit sequence numbers, so the exclusive "
+                   "upper bound wraps modulo 4096. The blue BA starting-sequence trace "
+                   "remains visible. When above-average highlighting is enabled, the "
+                   "destination BA label for an SSN rise rate above the current view "
                    "average is bold yellow. Intervals with zero captured time delta are "
                    "excluded from the SSN rate and SSN-rate highlighting. "
                    "Explicit-FCS-error BA labels remain gray."));
@@ -2141,6 +2142,8 @@ void WlanBlockAckGraphDialog::drawSession()
         }
 
         int positions = bitmapPositionCount(sample);
+        int wrapped_window_upper =
+                wrappedSequence(sample.starting_sequence + positions);
         // The same TA/RA/TID can start a new BA epoch later in the capture.
         // A backward window wholly below the ACK frontier cannot extend the
         // current epoch, so start a new frontier. Modulo wrap has already been
@@ -2180,9 +2183,9 @@ void WlanBlockAckGraphDialog::drawSession()
                     QStringLiteral("baSsnLabel_%1").arg(sample.frame_number));
         ssn_label->position->setAxes(d_->plot->xAxis, d_->plot->yAxis);
         ssn_label->position->setCoords(sample.relative_time, unwrapped);
-        ssn_label->setText(QStringLiteral("%1 (%2)")
+        ssn_label->setText(QStringLiteral("[%1, %2)")
                            .arg(sample.starting_sequence)
-                           .arg(bitmapSetBitCount(sample)));
+                           .arg(wrapped_window_upper));
         ssn_label->setPositionAlignment(Qt::AlignHCenter | Qt::AlignTop);
         ssn_label->setTextAlignment(Qt::AlignHCenter);
         ssn_label->setPadding(QMargins(0, 5, 0, 0));
