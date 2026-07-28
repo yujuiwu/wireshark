@@ -29,6 +29,7 @@
 #include <QHash>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMap>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QRadioButton>
@@ -65,6 +66,15 @@ static int wrappedSequence(qint64 sequence)
 {
     sequence %= sequence_modulus;
     return static_cast<int>(sequence < 0 ? sequence + sequence_modulus : sequence);
+}
+
+static qint64 floorDivide(qint64 dividend, qint64 divisor)
+{
+    qint64 quotient = dividend / divisor;
+    if (dividend < 0 && dividend % divisor != 0) {
+        quotient--;
+    }
+    return quotient;
 }
 
 class SequenceNumberAxisTicker : public QCPAxisTickerFixed
@@ -145,6 +155,11 @@ struct BaSample {
     uint32_t tid = 0;
     uint32_t starting_sequence = 0;
     QByteArray bitmap;
+};
+
+struct AckedMpduObservation {
+    qint64 relative_time_nanoseconds = 0;
+    int mpdu_count = 0;
 };
 
 enum class AgreementEventType {
@@ -472,6 +487,23 @@ static bool bitmapPositionSet(const BaSample &sample, int position)
     return (bitmap[byte_offset] & (1U << (position % 8))) != 0;
 }
 
+static uint16_t basicBitmapFragmentMask(const BaSample &sample, int position)
+{
+    if (sample.type != basic_block_ack) {
+        return 0;
+    }
+
+    int byte_offset = position * 2;
+    if (byte_offset + 1 >= sample.bitmap.size()) {
+        return 0;
+    }
+
+    const uint8_t *bitmap =
+            reinterpret_cast<const uint8_t *>(sample.bitmap.constData());
+    return static_cast<uint16_t>(bitmap[byte_offset]) |
+            (static_cast<uint16_t>(bitmap[byte_offset + 1]) << 8);
+}
+
 static int bitmapPositionCount(const BaSample &sample)
 {
     // A Basic BA has one 16-bit fragment bitmap for each of 64 sequence
@@ -479,6 +511,124 @@ static int bitmapPositionCount(const BaSample &sample)
     return sample.type == basic_block_ack
             ? static_cast<int>(sample.bitmap.size() / 2)
             : static_cast<int>(sample.bitmap.size() * 8);
+}
+
+static int addNewAckedMpdus(const BaSample &sample, int unwrapped_ssn,
+                            QSet<qint64> &observed_mpdus)
+{
+    if (sample.explicit_fcs_error) {
+        return 0;
+    }
+
+    int new_count = 0;
+    int positions = bitmapPositionCount(sample);
+    for (int position = 0; position < positions; position++) {
+        qint64 sequence = static_cast<qint64>(unwrapped_ssn) + position;
+        if (sample.type == basic_block_ack) {
+            uint16_t fragments = basicBitmapFragmentMask(sample, position);
+            for (int fragment = 0; fragment < 16; fragment++) {
+                if ((fragments & (1U << fragment)) == 0) {
+                    continue;
+                }
+                qint64 identity = sequence * 16 + fragment;
+                if (!observed_mpdus.contains(identity)) {
+                    observed_mpdus.insert(identity);
+                    new_count++;
+                }
+            }
+        } else if (bitmapPositionSet(sample, position)) {
+            qint64 identity = sequence * 16;
+            if (!observed_mpdus.contains(identity)) {
+                observed_mpdus.insert(identity);
+                new_count++;
+            }
+        }
+    }
+    return new_count;
+}
+
+static QVector<AckedMpduObservation> calculateAckedMpduObservations(
+        const BaSession &session, const QVector<AgreementEvent> *agreement_events)
+{
+    QVector<AckedMpduObservation> observations;
+    QSet<qint64> observed_mpdus;
+    qsizetype event_index = 0;
+    uint32_t previous_sequence = 0;
+    int previous_unwrapped = 0;
+    bool have_previous = false;
+    int next_sequence_after_highest_ack = 0;
+    bool have_ack_frontier = false;
+    auto reset_epoch = [&]() {
+        observed_mpdus.clear();
+        have_previous = false;
+        next_sequence_after_highest_ack = 0;
+        have_ack_frontier = false;
+    };
+
+    for (const BaSample &sample : session.samples) {
+        while (agreement_events && event_index < agreement_events->size()) {
+            const AgreementEvent &event = agreement_events->at(event_index);
+            bool event_precedes_sample =
+                    event.relative_time < sample.relative_time ||
+                    (event.relative_time == sample.relative_time &&
+                     event.frame_number < sample.frame_number);
+            if (!event_precedes_sample) {
+                break;
+            }
+            if (!event.explicit_fcs_error &&
+                (agreementEventStartsAnalysis(event.type) ||
+                 agreementEventEndsAnalysis(event.type))) {
+                reset_epoch();
+            }
+            event_index++;
+        }
+
+        if (sample.is_request || sample.explicit_fcs_error) {
+            continue;
+        }
+
+        int unwrapped = static_cast<int>(sample.starting_sequence);
+        if (have_previous) {
+            unwrapped = unwrapSequence(
+                        sample.starting_sequence, previous_sequence,
+                        previous_unwrapped);
+        }
+        int positions = bitmapPositionCount(sample);
+        bool ssn_moved_backward = have_previous &&
+                unwrapped < previous_unwrapped;
+        bool inferred_reset = have_ack_frontier && ssn_moved_backward &&
+                unwrapped + positions <= next_sequence_after_highest_ack;
+        if (inferred_reset) {
+            reset_epoch();
+        }
+
+        int new_count = addNewAckedMpdus(
+                    sample, unwrapped, observed_mpdus);
+        AckedMpduObservation observation;
+        observation.relative_time_nanoseconds =
+                sample.relative_time_nanoseconds;
+        observation.mpdu_count = new_count;
+        observations.append(observation);
+
+        int highest_set = -1;
+        for (int position = positions - 1; position >= 0; position--) {
+            if (bitmapPositionSet(sample, position)) {
+                highest_set = position;
+                break;
+            }
+        }
+        int sample_frontier = highest_set >= 0
+                ? unwrapped + highest_set + 1 : unwrapped;
+        next_sequence_after_highest_ack = have_ack_frontier
+                ? std::max(next_sequence_after_highest_ack, sample_frontier)
+                : sample_frontier;
+        have_ack_frontier = true;
+        previous_sequence = sample.starting_sequence;
+        previous_unwrapped = unwrapped;
+        have_previous = true;
+    }
+
+    return observations;
 }
 
 static bool validBitmapSize(uint32_t type, int size)
@@ -745,6 +895,7 @@ public:
     QHash<uint32_t, QString> agreement_frame_session_keys;
     QHash<QString, QVector<MpduSample>> captured_mpdus;
     QVector<AgreementEvent> displayed_agreement_events;
+    QVector<AckedMpduObservation> acked_mpdu_observations;
     BaViewMetrics view_metrics;
     QVector<int> anchor_sample_indexes;
     QVector<int> anchor_unwrapped_sequences;
@@ -767,8 +918,11 @@ public:
 
     QComboBox *station_pair_combo = nullptr;
     QComboBox *tid_combo = nullptr;
+    QComboBox *acked_mpdu_bucket_combo = nullptr;
+    QLabel *acked_mpdu_bucket_label = nullptr;
     QRadioButton *mouse_drag_radio = nullptr;
     QRadioButton *mouse_zoom_radio = nullptr;
+    QCheckBox *show_acked_mpdu_rate = nullptr;
     QCheckBox *show_ssn_labels = nullptr;
     QCheckBox *show_time_deltas = nullptr;
     QCheckBox *highlight_above_average = nullptr;
@@ -797,6 +951,7 @@ public:
     QCPGraph *bad_fcs_zero_graph = nullptr;
     QCPGraph *mpdu_graph = nullptr;
     QCPGraph *retry_mpdu_graph = nullptr;
+    QCPGraph *acked_mpdu_rate_graph = nullptr;
     QRubberBand *zoom_rubber_band = nullptr;
     QPoint zoom_origin;
 
@@ -838,6 +993,28 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->tid_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     d_->tid_combo->setToolTip(
                 tr("TIDs are sorted by received BA count, highest first."));
+    d_->acked_mpdu_bucket_combo = new QComboBox(this);
+    d_->acked_mpdu_bucket_combo->setObjectName(
+                QStringLiteral("ackedMpduBucketComboBox"));
+    d_->acked_mpdu_bucket_combo->setSizeAdjustPolicy(
+                QComboBox::AdjustToContents);
+    const int acked_mpdu_bucket_milliseconds[] = {
+        1000, 500, 200, 100, 50, 10, 1
+    };
+    for (int milliseconds : acked_mpdu_bucket_milliseconds) {
+        d_->acked_mpdu_bucket_combo->addItem(
+                    durationLabel(milliseconds / 1000.0), milliseconds);
+    }
+    d_->acked_mpdu_bucket_combo->setCurrentIndex(
+                d_->acked_mpdu_bucket_combo->findData(100));
+    d_->acked_mpdu_bucket_combo->setToolTip(
+                tr("Choose the fixed sampling bucket for the acknowledged-MPDU rate. A "
+                   "bitmap set bit is counted once when it is first observed in the current "
+                   "BA agreement epoch; repeated BA evidence is not counted again. Basic BA "
+                   "fragment bits count as individual MPDUs. Each bucket count is divided by "
+                   "its duration to produce MPDUs/s. Frames with an explicit FCS error do "
+                   "not affect this metric. Buckets are half-open and aligned to "
+                   "capture-relative time zero."));
     tid_label->setBuddy(d_->tid_combo);
     d_->mouse_drag_radio = new QRadioButton(tr("Drag"), this);
     d_->mouse_drag_radio->setObjectName(QStringLiteral("mouseDragRadioButton"));
@@ -851,6 +1028,15 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     mouse_mode_group->addButton(d_->mouse_drag_radio);
     mouse_mode_group->addButton(d_->mouse_zoom_radio);
     d_->mouse_drag_radio->setChecked(true);
+    d_->show_acked_mpdu_rate =
+            new QCheckBox(tr("Show MPDU ACK observations/s"), this);
+    d_->show_acked_mpdu_rate->setObjectName(
+                QStringLiteral("showAckedMpduRateCheckBox"));
+    d_->show_acked_mpdu_rate->setChecked(false);
+    d_->show_acked_mpdu_rate->setToolTip(
+                tr("Show newly observed acknowledged MPDUs/s as a step line using the right "
+                   "Y axis. The rate is based on trustworthy BA evidence at capture time, "
+                   "not the actual MPDU receive or delivery time."));
     d_->show_ssn_labels = new QCheckBox(tr("Show SSN labels"), this);
     d_->show_ssn_labels->setObjectName(QStringLiteral("showSsnLabelsCheckBox"));
     d_->show_ssn_labels->setChecked(false);
@@ -968,9 +1154,14 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "in gray. Vertical markers show ADDBA and DELBA events for the selected "
                    "session; click a marker for packet details. An SSN reset marker means "
                    "that a new analysis epoch was inferred without a captured agreement "
-                   "boundary."));
+                   "boundary. The brown step line uses the right axis to show the rate of "
+                   "new trustworthy MPDU ACK observations using the selected fixed time "
+                   "bucket."));
     d_->plot->addLayer(QStringLiteral("baAgreementEvents"),
                        d_->plot->layer(QStringLiteral("main")), QCustomPlot::limBelow);
+    d_->plot->addLayer(QStringLiteral("baAckedMpduRate"),
+                       d_->plot->layer(QStringLiteral("baAgreementEvents")),
+                       QCustomPlot::limBelow);
     d_->plot->addLayer(QStringLiteral("baAgreementEventLabels"),
                        d_->plot->layer(QStringLiteral("main")), QCustomPlot::limAbove);
     d_->plot->addLayer(QStringLiteral("baSsnLabels"), d_->plot->layer(QStringLiteral("main")),
@@ -986,6 +1177,19 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     sequence_ticker->setTickStep(1.0);
     sequence_ticker->setScaleStrategy(QCPAxisTickerFixed::ssMultiples);
     d_->plot->yAxis->setTicker(sequence_ticker);
+    d_->plot->yAxis2->setVisible(false);
+    QColor ack_count_color(tango_chocolate_5);
+    QPen ack_count_axis_pen(ack_count_color);
+    d_->plot->yAxis2->setBasePen(ack_count_axis_pen);
+    d_->plot->yAxis2->setTickPen(ack_count_axis_pen);
+    d_->plot->yAxis2->setSubTickPen(ack_count_axis_pen);
+    d_->plot->yAxis2->setLabelColor(ack_count_color);
+    d_->plot->yAxis2->setTickLabelColor(ack_count_color);
+    QSharedPointer<QCPAxisTickerFixed> ack_count_ticker(new QCPAxisTickerFixed);
+    ack_count_ticker->setTickStep(1.0);
+    ack_count_ticker->setScaleStrategy(QCPAxisTickerFixed::ssMultiples);
+    d_->plot->yAxis2->setTicker(ack_count_ticker);
+    d_->plot->yAxis2->setRange(0.0, 1.0);
     d_->plot->legend->setVisible(true);
     d_->plot->axisRect()->insetLayout()->setInsetAlignment(
                 0, Qt::AlignRight | Qt::AlignBottom);
@@ -1148,11 +1352,28 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->bad_fcs_zero_graph->setSelectable(QCP::stNone);
     d_->bad_fcs_zero_graph->removeFromLegend();
 
+    d_->acked_mpdu_rate_graph =
+            d_->plot->addGraph(d_->plot->xAxis, d_->plot->yAxis2);
+    d_->acked_mpdu_rate_graph->setObjectName(
+                QStringLiteral("ackedMpduRateGraph"));
+    d_->acked_mpdu_rate_graph->setLineStyle(QCPGraph::lsStepLeft);
+    d_->acked_mpdu_rate_graph->setScatterStyle(QCPScatterStyle::ssNone);
+    d_->acked_mpdu_rate_graph->setPen(
+                QPen(QColor(tango_chocolate_5), 1.5));
+    d_->acked_mpdu_rate_graph->setSelectable(QCP::stNone);
+    d_->acked_mpdu_rate_graph->setLayer(
+                QStringLiteral("baAckedMpduRate"));
+    d_->acked_mpdu_rate_graph->setVisible(false);
+    updateAckedMpduBuckets();
+
     d_->details_label = new QLabel(
                 tr("Block Ack responses drive the acknowledgment analysis. Matching captured "
                    "QoS Data MPDUs can be displayed separately, but capture presence does not "
                    "prove reception by the destination. Bitmap zeros mean “not acknowledged "
-                   "in this BA”; they do not prove transmission or packet loss."), this);
+                   "in this BA”; they do not prove transmission or packet loss. The "
+                   "right-axis line shows the per-second rate of first-observed trustworthy "
+                   "MPDU ACK evidence at BA capture time, not actual receiver delivery "
+                   "time."), this);
     d_->details_label->setObjectName(QStringLiteral("blockAckDetailsLabel"));
     d_->details_label->setWordWrap(true);
     main_layout->addWidget(d_->details_label);
@@ -1180,6 +1401,14 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     mouse_layout->addWidget(new QLabel(tr("Mouse:"), this));
     mouse_layout->addWidget(d_->mouse_drag_radio);
     mouse_layout->addWidget(d_->mouse_zoom_radio);
+    mouse_layout->addSpacing(16);
+    mouse_layout->addWidget(d_->show_acked_mpdu_rate);
+    d_->acked_mpdu_bucket_label = new QLabel(tr("Rate interval:"), this);
+    d_->acked_mpdu_bucket_label->setBuddy(d_->acked_mpdu_bucket_combo);
+    d_->acked_mpdu_bucket_label->setEnabled(false);
+    d_->acked_mpdu_bucket_combo->setEnabled(false);
+    mouse_layout->addWidget(d_->acked_mpdu_bucket_label);
+    mouse_layout->addWidget(d_->acked_mpdu_bucket_combo);
     mouse_layout->addStretch(1);
     main_layout->addLayout(mouse_layout);
 
@@ -1195,6 +1424,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     display_layout->addWidget(d_->show_agreement_events);
     display_layout->addStretch(1);
     main_layout->addLayout(display_layout);
+
+    QWidget::setTabOrder(d_->tid_combo, d_->mouse_drag_radio);
+    QWidget::setTabOrder(d_->mouse_drag_radio, d_->mouse_zoom_radio);
+    QWidget::setTabOrder(d_->mouse_zoom_radio, d_->show_acked_mpdu_rate);
+    QWidget::setTabOrder(d_->show_acked_mpdu_rate,
+                         d_->acked_mpdu_bucket_combo);
+    QWidget::setTabOrder(d_->acked_mpdu_bucket_combo, d_->show_ssn_labels);
 
     d_->button_box = new QDialogButtonBox(QDialogButtonBox::Save |
                                            QDialogButtonBox::Reset |
@@ -1228,6 +1464,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::stationPairChanged);
     connect(d_->tid_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &WlanBlockAckGraphDialog::tidChanged);
+    connect(d_->acked_mpdu_bucket_combo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &WlanBlockAckGraphDialog::ackedMpduBucketChanged);
+    connect(d_->show_acked_mpdu_rate, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::ackedMpduRateToggled);
     connect(d_->mouse_zoom_radio, &QRadioButton::toggled,
             this, &WlanBlockAckGraphDialog::mouseZoomToggled);
     connect(d_->show_ssn_labels, &QCheckBox::toggled,
@@ -1264,6 +1505,11 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::updateLabelHighlights);
     connect(d_->plot, &QCustomPlot::afterLayout,
             this, &WlanBlockAckGraphDialog::updateAgreementEventLabelVisibility);
+    connect(d_->plot->xAxis,
+            QOverload<const QCPRange &>::of(&QCPAxis::rangeChanged),
+            this, [this](const QCPRange &) {
+        updateAckedMpduAxisRange();
+    });
     connect(zoom_in_x_action, &QAction::triggered,
             this, [this]() { zoomXAxis(true); });
     connect(zoom_out_x_action, &QAction::triggered,
@@ -1922,6 +2168,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->mpdu_graph->setSelection(QCPDataSelection());
     d_->retry_mpdu_graph->data()->clear();
     d_->retry_mpdu_graph->setSelection(QCPDataSelection());
+    d_->acked_mpdu_rate_graph->data()->clear();
+    d_->acked_mpdu_observations.clear();
     d_->window_upper_graph->data()->clear();
     d_->set_graph->data()->clear();
     d_->previously_set_zero_graph->data()->clear();
@@ -1955,6 +2203,9 @@ void WlanBlockAckGraphDialog::drawSession()
     if (session_index < 0 || session_index >= d_->sessions.size()) {
         d_->show_ssn_labels->setEnabled(false);
         d_->show_time_deltas->setEnabled(false);
+        d_->show_acked_mpdu_rate->setEnabled(false);
+        d_->acked_mpdu_bucket_label->setEnabled(false);
+        d_->acked_mpdu_bucket_combo->setEnabled(false);
         d_->highlight_above_average->setEnabled(false);
         d_->show_ack_gaps->setEnabled(false);
         d_->show_mpdus->setEnabled(false);
@@ -1981,6 +2232,9 @@ void WlanBlockAckGraphDialog::drawSession()
                     .arg(d_->malformed_bar_frames));
         d_->plot->xAxis->setRange(0.0, 1.0);
         d_->plot->yAxis->setRange(0.0, 1.0);
+        d_->plot->yAxis2->setRange(0.0, 1.0);
+        d_->plot->yAxis2->setVisible(false);
+        d_->acked_mpdu_rate_graph->setVisible(false);
         d_->plot->replot();
         return;
     }
@@ -1998,9 +2252,18 @@ void WlanBlockAckGraphDialog::drawSession()
     if (agreement_events) {
         d_->displayed_agreement_events = *agreement_events;
     }
+    d_->acked_mpdu_observations =
+            calculateAckedMpduObservations(session, agreement_events);
     int mpdu_count = mpdus ? static_cast<int>(mpdus->size()) : 0;
     d_->show_ssn_labels->setEnabled(have_responses);
     d_->show_time_deltas->setEnabled(have_responses);
+    d_->show_acked_mpdu_rate->setEnabled(have_responses);
+    bool show_acked_mpdu_rate =
+            have_responses && d_->show_acked_mpdu_rate->isChecked();
+    d_->acked_mpdu_bucket_label->setEnabled(show_acked_mpdu_rate);
+    d_->acked_mpdu_bucket_combo->setEnabled(show_acked_mpdu_rate);
+    d_->plot->yAxis2->setVisible(show_acked_mpdu_rate);
+    d_->acked_mpdu_rate_graph->setVisible(show_acked_mpdu_rate);
     d_->highlight_above_average->setEnabled(have_responses);
     d_->show_ack_gaps->setEnabled(have_responses);
     d_->show_mpdus->setEnabled(mpdu_count > 0);
@@ -2439,6 +2702,7 @@ void WlanBlockAckGraphDialog::drawSession()
                 bad_fcs_set_times, bad_fcs_set_sequences, true);
     d_->bad_fcs_zero_graph->setData(
                 bad_fcs_zero_times, bad_fcs_zero_sequences, true);
+    updateAckedMpduBuckets();
     std::stable_sort(d_->displayed_agreement_events.begin(),
                      d_->displayed_agreement_events.end(),
                      [](const AgreementEvent &left, const AgreementEvent &right) {
@@ -2521,6 +2785,97 @@ void WlanBlockAckGraphDialog::drawSession()
         showRequestDetails(0);
     }
     resetAxes();
+}
+
+void WlanBlockAckGraphDialog::updateAckedMpduBuckets()
+{
+    qint64 bucket_nanoseconds =
+            d_->acked_mpdu_bucket_combo->currentData().toLongLong() * 1000000;
+    if (bucket_nanoseconds <= 0) {
+        d_->acked_mpdu_rate_graph->data()->clear();
+        d_->plot->yAxis2->setRange(0.0, 1.0);
+        return;
+    }
+
+    QString interval_label = d_->acked_mpdu_bucket_combo->currentText();
+    QString metric_label =
+            tr("New MPDU ACK observations/s (%1 interval)").arg(interval_label);
+    d_->acked_mpdu_rate_graph->setName(metric_label);
+    d_->plot->yAxis2->setLabel(tr("New MPDU ACK observations/s"));
+
+    QMap<qint64, qint64> bucket_counts;
+    for (const AckedMpduObservation &observation :
+         d_->acked_mpdu_observations) {
+        qint64 bucket_index = floorDivide(
+                    observation.relative_time_nanoseconds,
+                    bucket_nanoseconds);
+        bucket_counts[bucket_index] += observation.mpdu_count;
+    }
+
+    QVector<double> bucket_times;
+    QVector<double> mpdu_rates;
+    bucket_times.reserve(bucket_counts.size() * 2 + 1);
+    mpdu_rates.reserve(bucket_counts.size() * 2 + 1);
+    bool have_previous_bucket = false;
+    qint64 previous_bucket = 0;
+    for (auto bucket = bucket_counts.cbegin();
+         bucket != bucket_counts.cend(); bucket++) {
+        if (have_previous_bucket &&
+            bucket.key() > previous_bucket + 1) {
+            long double gap_start_nanoseconds =
+                    static_cast<long double>(previous_bucket + 1) *
+                    bucket_nanoseconds;
+            bucket_times.append(
+                        static_cast<double>(
+                            gap_start_nanoseconds / nanoseconds_per_second));
+            mpdu_rates.append(0.0);
+        }
+        long double bucket_start_nanoseconds =
+                static_cast<long double>(bucket.key()) * bucket_nanoseconds;
+        bucket_times.append(
+                    static_cast<double>(
+                        bucket_start_nanoseconds / nanoseconds_per_second));
+        long double rate =
+                static_cast<long double>(bucket.value()) *
+                nanoseconds_per_second / bucket_nanoseconds;
+        mpdu_rates.append(static_cast<double>(rate));
+        previous_bucket = bucket.key();
+        have_previous_bucket = true;
+    }
+    if (have_previous_bucket) {
+        long double final_bucket_end_nanoseconds =
+                static_cast<long double>(previous_bucket + 1) *
+                bucket_nanoseconds;
+        bucket_times.append(
+                    static_cast<double>(
+                        final_bucket_end_nanoseconds /
+                        nanoseconds_per_second));
+        mpdu_rates.append(0.0);
+    }
+    d_->acked_mpdu_rate_graph->setData(bucket_times, mpdu_rates, true);
+    updateAckedMpduAxisRange();
+}
+
+void WlanBlockAckGraphDialog::updateAckedMpduAxisRange()
+{
+    if (!d_->show_acked_mpdu_rate->isChecked() ||
+        !d_->acked_mpdu_rate_graph ||
+        d_->acked_mpdu_rate_graph->data()->isEmpty()) {
+        d_->plot->yAxis2->setRange(0.0, 1.0);
+        return;
+    }
+
+    QCPRange visible_buckets = d_->plot->xAxis->range();
+    double bucket_width =
+            d_->acked_mpdu_bucket_combo->currentData().toDouble() / 1000.0;
+    visible_buckets.lower -= bucket_width;
+    bool have_range = false;
+    QCPRange count_range = d_->acked_mpdu_rate_graph->getValueRange(
+                have_range, QCP::sdPositive, visible_buckets);
+    double maximum = have_range ? count_range.upper : 0.0;
+    double padding = maximum > 0.0
+            ? std::max(1.0, maximum * 0.1) : 1.0;
+    d_->plot->yAxis2->setRange(0.0, maximum + padding);
 }
 
 void WlanBlockAckGraphDialog::updateLabelHighlights()
@@ -3296,6 +3651,23 @@ void WlanBlockAckGraphDialog::timeDeltasToggled(bool checked)
     d_->plot->replot();
 }
 
+void WlanBlockAckGraphDialog::ackedMpduBucketChanged(int)
+{
+    updateAckedMpduBuckets();
+    d_->plot->replot();
+}
+
+void WlanBlockAckGraphDialog::ackedMpduRateToggled(bool checked)
+{
+    bool visible = checked && d_->show_acked_mpdu_rate->isEnabled();
+    d_->acked_mpdu_bucket_label->setEnabled(visible);
+    d_->acked_mpdu_bucket_combo->setEnabled(visible);
+    d_->acked_mpdu_rate_graph->setVisible(visible);
+    d_->plot->yAxis2->setVisible(visible);
+    updateAckedMpduAxisRange();
+    d_->plot->replot();
+}
+
 void WlanBlockAckGraphDialog::labelHighlightsToggled(bool)
 {
     d_->plot->replot();
@@ -3588,6 +3960,7 @@ void WlanBlockAckGraphDialog::resetAxes()
         d_->plot->yAxis->setRange(y_range);
         d_->plot->yAxis->scaleRange(1.12, y_range.center());
     }
+    updateAckedMpduAxisRange();
     d_->plot->replot();
 }
 

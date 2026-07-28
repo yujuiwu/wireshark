@@ -17,6 +17,7 @@
       --accent-soft: #e7f4fb;
       --blue: #155e93;
       --orange: #d56b08;
+      --retry-orange: #ce5c00;
       --purple: #7a3ea1;
       --green: #16833d;
       --red: #c9362b;
@@ -128,6 +129,8 @@
     .key { display: inline-flex; align-items: center; gap: .38rem; }
     .swatch { width: 1.3rem; height: .3rem; border-radius: 999px; background: currentColor; }
     .swatch.event { width: .18rem; height: 1.05rem; border-radius: 0; }
+    .swatch.diamond { width: .62rem; height: .62rem; border-radius: 0; transform: rotate(45deg); }
+    .swatch.retry { width: .72rem; height: .72rem; border: 2px solid currentColor; border-radius: 0; background: transparent; transform: rotate(45deg); }
     .shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.2rem; }
     figure { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .75rem; background: var(--panel); box-shadow: 0 6px 18px rgb(22 39 55 / 7%); }
     figure img { display: block; width: 100%; height: auto; background: #eef2f4; }
@@ -254,7 +257,8 @@
               <span class="key" style="color:var(--green)"><span class="swatch"></span>Prior-set zero cross</span>
               <span class="key" style="color:var(--red)"><span class="swatch"></span>Zero-without-prior-set cross</span>
               <span class="key" style="color:var(--dark-red)"><span class="swatch"></span>Persistent-hole span</span>
-              <span class="key" style="color:var(--gold)"><span class="swatch"></span>Captured MPDU diamond</span>
+              <span class="key" style="color:var(--gold)"><span class="swatch diamond"></span>Captured MPDU (Retry clear)</span>
+              <span class="key" style="color:var(--retry-orange)"><span class="swatch retry"></span>Captured MPDU (Retry set)</span>
               <span class="key" style="color:var(--graphite)"><span class="swatch"></span>No-BA-ACK gap dot</span>
               <span class="key" style="color:var(--purple)"><span class="swatch event"></span>ADDBA Request</span>
               <span class="key" style="color:var(--green)"><span class="swatch event"></span>Accepted ADDBA Response</span>
@@ -303,11 +307,11 @@
         </article>
         <article class="feature">
           <h3>SSN and BA timing labels</h3>
-          <p><strong>Show SSN labels</strong> adds wrapped 12-bit values below the BA points. <strong>Show BA time deltas</strong> adds elapsed time from the previous BA above each blue segment. Labels annotate the graph only. The normal screenshot shows both.</p>
+          <p><strong>Show SSN labels</strong> adds wrapped 12-bit values and bitmap set-bit counts below the BA points, formatted as <strong>SSN (set bits)</strong>. <strong>Show BA time deltas</strong> adds elapsed time from the previous BA above each blue segment. Labels annotate the graph only.</p>
         </article>
         <article class="feature">
           <h3>BARs and captured MPDUs</h3>
-          <p>Purple, white-filled triangles identify reverse-direction BAR starting sequences. Optional QoS Data observations use gold diamonds with dark outlines, making them distinct by color and shape. A-MPDU members are plotted separately. They do not change BA analysis. See the normal screenshot.</p>
+          <p>Purple, white-filled triangles identify reverse-direction BAR starting sequences. Optional QoS Data observations use filled gold diamonds when the Retry bit is clear and larger hollow orange diamonds when it is set. A-MPDU members are plotted separately. The viewport summary reports the observed retry count and rate. These observations do not change BA analysis. See the normal screenshot.</p>
         </article>
         <article class="feature">
           <h3>Bitmap holes and persistent aging</h3>
@@ -319,7 +323,7 @@
         </article>
         <article class="feature">
           <h3>Rectangle zoom and live summary</h3>
-          <p>Select <strong>Zoom</strong> and drag a rectangle over the plot, use the wheel, or use the X/Y controls. The summary recomputes BA, BAR, MPDU, set, hole, persistent-span, and gap counts for the X/Y viewport. <strong>X-axis duration</strong> is the displayed axis span, including margins—not simply the first-to-last event time.</p>
+          <p>Select <strong>Zoom</strong> and drag a rectangle over the plot, use the wheel, or use the X/Y controls. The summary recomputes BA, BAR, MPDU, observed MPDU retry count and rate, set, hole, persistent-span, and gap counts for the X/Y viewport. <strong>X-axis duration</strong> is the displayed axis span, including margins—not simply the first-to-last event time.</p>
         </article>
         <article class="feature">
           <h3>12-bit sequence wrapping</h3>
@@ -345,9 +349,9 @@
           <tbody>
             <tr><td>BA pair / TID</td><td>Selected packet, otherwise busiest</td><td>Selects one normalized BA-response-direction session. Both lists are sorted by received BA count, highest first; pair totals sum all of their TIDs.</td></tr>
             <tr><td>Drag / Zoom</td><td>Drag</td><td>Pans the axes or replaces both ranges with a selected rectangle.</td></tr>
-            <tr><td>SSN labels / BA time deltas</td><td>Off</td><td>Adds wrapped SSNs and spacing between consecutive BA responses.</td></tr>
+            <tr><td>SSN labels / BA time deltas</td><td>Off</td><td>Adds wrapped SSNs with bitmap set-bit counts and spacing between consecutive BA responses.</td></tr>
             <tr><td>BA ACK gaps</td><td>Off</td><td>Adds gray no-observed-BA-ACK-before-advance positions.</td></tr>
-            <tr><td>Captured MPDUs</td><td>Off</td><td>Adds gold reverse-direction QoS Data diamonds.</td></tr>
+            <tr><td>Captured MPDUs</td><td>Off</td><td>Adds reverse-direction QoS Data observations: filled gold diamonds for Retry clear and larger hollow orange diamonds for Retry set.</td></tr>
             <tr><td>Persistent-hole aging</td><td>Off</td><td>Adds dark-red lifetimes and selectable endpoints.</td></tr>
             <tr><td>Bitmap set</td><td>On</td><td>Shows or hides set-position dots: normally green, gray for an explicit FCS-error BA.</td></tr>
             <tr><td>Bitmap holes</td><td>Off</td><td>Adds green prior-set crosses and red no-prior-set crosses; either is gray for an explicit FCS-error BA.</td></tr>
@@ -650,1067 +654,1280 @@
       [
         0.202203,
         0,
-        0
+        0,
+        false
       ],
       [
         0.208524,
         1,
-        1
+        1,
+        true
       ],
       [
         0.209072,
         1,
-        1
+        1,
+        true
       ],
       [
         0.210184,
         2,
-        2
+        2,
+        false
       ],
       [
         0.210188,
         2,
-        2
+        2,
+        true
       ],
       [
         0.215993,
         2,
-        2
+        2,
+        true
       ],
       [
         0.216167,
         3,
-        3
+        3,
+        false
       ],
       [
         0.316866,
         4,
-        4
+        4,
+        false
       ],
       [
         0.318266,
         5,
-        5
+        5,
+        false
       ],
       [
         0.318269,
         6,
-        6
+        6,
+        false
       ],
       [
         0.318272,
         7,
-        7
+        7,
+        false
       ],
       [
         0.624125,
         8,
-        8
+        8,
+        true
       ],
       [
         0.813194,
         9,
-        9
+        9,
+        false
       ],
       [
         1.228414,
         10,
-        10
+        10,
+        false
       ],
       [
         1.27866,
         11,
-        11
+        11,
+        true
       ],
       [
         1.278663,
         12,
-        12
+        12,
+        false
       ],
       [
         1.295019,
         13,
-        13
+        13,
+        false
       ],
       [
         1.299804,
         14,
-        14
+        14,
+        false
       ],
       [
         1.303639,
         15,
-        15
+        15,
+        false
       ],
       [
         1.307012,
         16,
-        16
+        16,
+        false
       ],
       [
         1.307019,
         16,
-        16
+        16,
+        true
       ],
       [
         1.307022,
         16,
-        16
+        16,
+        true
       ],
       [
         1.307984,
         16,
-        16
+        16,
+        true
       ],
       [
         1.309698,
         16,
-        16
+        16,
+        true
       ],
       [
         1.322468,
         17,
-        17
+        17,
+        false
       ],
       [
         1.322485,
         18,
-        18
+        18,
+        false
       ],
       [
         1.322488,
         19,
-        19
+        19,
+        false
       ],
       [
         1.322491,
         20,
-        20
+        20,
+        false
       ],
       [
         1.33522,
         21,
-        21
+        21,
+        false
       ],
       [
         1.335225,
         22,
-        22
+        22,
+        false
       ],
       [
         1.335233,
         23,
-        23
+        23,
+        false
       ],
       [
         1.33838,
         24,
-        24
+        24,
+        false
       ],
       [
         1.338388,
         24,
-        24
+        24,
+        true
       ],
       [
         1.338391,
         24,
-        24
+        24,
+        true
       ],
       [
         1.339188,
         24,
-        24
+        24,
+        true
       ],
       [
         1.347509,
         25,
-        25
+        25,
+        false
       ],
       [
         1.347516,
         25,
-        25
+        25,
+        true
       ],
       [
         1.347519,
         25,
-        25
+        25,
+        true
       ],
       [
         1.349214,
         25,
-        25
+        25,
+        true
       ],
       [
         1.351111,
         25,
-        25
+        25,
+        true
       ],
       [
         1.351115,
         26,
-        26
+        26,
+        false
       ],
       [
         1.358524,
         27,
-        27
+        27,
+        false
       ],
       [
         1.358535,
         28,
-        28
+        28,
+        false
       ],
       [
         1.387343,
         29,
-        29
+        29,
+        false
       ],
       [
         1.387349,
         30,
-        30
+        30,
+        false
       ],
       [
         1.563482,
         31,
-        31
+        31,
+        false
       ],
       [
         1.563489,
         31,
-        31
+        31,
+        true
       ],
       [
         1.563492,
         31,
-        31
+        31,
+        true
       ],
       [
         1.563498,
         31,
-        31
+        31,
+        true
       ],
       [
         1.563743,
         31,
-        31
+        31,
+        true
       ],
       [
         1.583544,
         32,
-        32
+        32,
+        false
       ],
       [
         1.58355,
         32,
-        32
+        32,
+        true
       ],
       [
         1.583553,
         32,
-        32
+        32,
+        true
       ],
       [
         1.583556,
         32,
-        32
+        32,
+        true
       ],
       [
         1.587333,
         32,
-        32
+        32,
+        true
       ],
       [
         1.722544,
         33,
-        33
+        33,
+        false
       ],
       [
         1.72255,
         33,
-        33
+        33,
+        true
       ],
       [
         1.722553,
         33,
-        33
+        33,
+        true
       ],
       [
         1.722555,
         33,
-        33
+        33,
+        true
       ],
       [
         1.723182,
         33,
-        33
+        33,
+        true
       ],
       [
         1.768248,
         33,
-        33
+        33,
+        true
       ],
       [
         1.81798,
         34,
-        34
+        34,
+        false
       ],
       [
         1.817986,
         34,
-        34
+        34,
+        true
       ],
       [
         1.817989,
         34,
-        34
+        34,
+        true
       ],
       [
         1.817993,
         34,
-        34
+        34,
+        true
       ],
       [
         1.818142,
         34,
-        34
+        34,
+        true
       ],
       [
         1.90409,
         35,
-        35
+        35,
+        false
       ],
       [
         1.904096,
         36,
-        36
+        36,
+        false
       ],
       [
         1.920444,
         37,
-        37
+        37,
+        false
       ],
       [
         1.920452,
         37,
-        37
+        37,
+        true
       ],
       [
         2.020749,
         38,
-        38
+        38,
+        false
       ],
       [
         2.020755,
         39,
-        39
+        39,
+        false
       ],
       [
         2.120403,
         40,
-        40
+        40,
+        false
       ],
       [
         2.131855,
         41,
-        41
+        41,
+        false
       ],
       [
         2.131862,
         41,
-        41
+        41,
+        true
       ],
       [
         2.131865,
         42,
-        42
+        42,
+        false
       ],
       [
         2.131868,
         41,
-        41
+        41,
+        true
       ],
       [
         2.131871,
         42,
-        42
+        42,
+        true
       ],
       [
         2.13246,
         41,
-        41
+        41,
+        true
       ],
       [
         2.132466,
         42,
-        42
+        42,
+        true
       ],
       [
         2.141218,
         41,
-        41
+        41,
+        true
       ],
       [
         2.141222,
         42,
-        42
+        42,
+        true
       ],
       [
         2.329148,
         43,
-        43
+        43,
+        false
       ],
       [
         2.329709,
         44,
-        44
+        44,
+        false
       ],
       [
         2.329714,
         45,
-        45
+        45,
+        false
       ],
       [
         2.329717,
         46,
-        46
+        46,
+        false
       ],
       [
         2.338703,
         44,
-        44
+        44,
+        true
       ],
       [
         2.338706,
         45,
-        45
+        45,
+        true
       ],
       [
         2.338709,
         46,
-        46
+        46,
+        true
       ],
       [
         2.339045,
         44,
-        44
+        44,
+        true
       ],
       [
         2.339048,
         45,
-        45
+        45,
+        true
       ],
       [
         2.339051,
         46,
-        46
+        46,
+        true
       ],
       [
         2.34192,
         44,
-        44
+        44,
+        true
       ],
       [
         2.341925,
         45,
-        45
+        45,
+        true
       ],
       [
         2.341928,
         46,
-        46
+        46,
+        true
       ],
       [
         2.341931,
         47,
-        47
+        47,
+        false
       ],
       [
         2.341933,
         48,
-        48
+        48,
+        false
       ],
       [
         2.352725,
         49,
-        49
+        49,
+        false
       ],
       [
         2.354713,
         49,
-        49
+        49,
+        true
       ],
       [
         2.355238,
         49,
-        49
+        49,
+        true
       ],
       [
         2.355646,
         49,
-        49
+        49,
+        true
       ],
       [
         2.35953,
         49,
-        49
+        49,
+        true
       ],
       [
         2.402053,
         49,
-        49
+        49,
+        true
       ],
       [
         2.402056,
         50,
-        50
+        50,
+        false
       ],
       [
         2.402059,
         51,
-        51
+        51,
+        false
       ],
       [
         2.426324,
         49,
-        49
+        49,
+        true
       ],
       [
         2.426327,
         50,
-        50
+        50,
+        true
       ],
       [
         2.42633,
         51,
-        51
+        51,
+        true
       ],
       [
         2.430257,
         52,
-        52
+        52,
+        false
       ],
       [
         2.495057,
         53,
-        53
+        53,
+        false
       ],
       [
         2.551258,
         56,
-        56
+        56,
+        false
       ],
       [
         2.551263,
         57,
-        57
+        57,
+        false
       ],
       [
         2.551269,
         58,
-        58
+        58,
+        false
       ],
       [
         2.551271,
         59,
-        59
+        59,
+        false
       ],
       [
         2.551278,
         56,
-        56
+        56,
+        true
       ],
       [
         2.551281,
         57,
-        57
+        57,
+        true
       ],
       [
         2.551283,
         58,
-        58
+        58,
+        true
       ],
       [
         2.551286,
         59,
-        59
+        59,
+        true
       ],
       [
         2.555086,
         60,
-        60
+        60,
+        true
       ],
       [
         2.555344,
         60,
-        60
+        60,
+        true
       ],
       [
         2.562526,
         60,
-        60
+        60,
+        true
       ],
       [
         2.562529,
         61,
-        61
+        61,
+        false
       ],
       [
         2.564005,
         62,
-        62
+        62,
+        false
       ],
       [
         2.564013,
         63,
-        63
+        63,
+        false
       ],
       [
         2.591142,
         64,
-        64
+        64,
+        false
       ],
       [
         2.591148,
         65,
-        65
+        65,
+        false
       ],
       [
         2.591152,
         64,
-        64
+        64,
+        true
       ],
       [
         2.591155,
         65,
-        65
+        65,
+        true
       ],
       [
         2.591158,
         64,
-        64
+        64,
+        true
       ],
       [
         2.591161,
         65,
-        65
+        65,
+        true
       ],
       [
         2.591752,
         64,
-        64
+        64,
+        true
       ],
       [
         2.591755,
         65,
-        65
+        65,
+        true
       ],
       [
         2.591758,
         66,
-        66
+        66,
+        false
       ],
       [
         2.794338,
         67,
-        67
+        67,
+        false
       ],
       [
         2.816269,
         68,
-        68
+        68,
+        false
       ],
       [
         2.816843,
         69,
-        69
+        69,
+        false
       ],
       [
         2.816846,
         70,
-        70
+        70,
+        false
       ],
       [
         2.911103,
         71,
-        71
+        71,
+        false
       ],
       [
         2.911109,
         72,
-        72
+        72,
+        false
       ],
       [
         2.911112,
         71,
-        71
+        71,
+        true
       ],
       [
         2.911114,
         72,
-        72
+        72,
+        true
       ],
       [
         2.911117,
         71,
-        71
+        71,
+        true
       ],
       [
         2.911119,
         72,
-        72
+        72,
+        true
       ],
       [
         2.911123,
         71,
-        71
+        71,
+        true
       ],
       [
         2.911126,
         72,
-        72
+        72,
+        true
       ],
       [
         2.913558,
         71,
-        71
+        71,
+        true
       ],
       [
         2.913561,
         72,
-        72
+        72,
+        true
       ],
       [
         2.916759,
         72,
-        72
+        72,
+        true
       ],
       [
         2.975386,
         73,
-        73
+        73,
+        false
       ],
       [
         2.975392,
         74,
-        74
+        74,
+        false
       ],
       [
         2.975397,
         73,
-        73
+        73,
+        true
       ],
       [
         2.975399,
         74,
-        74
+        74,
+        true
       ],
       [
         2.975403,
         73,
-        73
+        73,
+        true
       ],
       [
         2.975405,
         74,
-        74
+        74,
+        true
       ],
       [
         2.975408,
         73,
-        73
+        73,
+        true
       ],
       [
         2.97541,
         74,
-        74
+        74,
+        true
       ],
       [
         2.979694,
         73,
-        73
+        73,
+        true
       ],
       [
         2.9797,
         74,
-        74
+        74,
+        true
       ],
       [
         3.009787,
         75,
-        75
+        75,
+        true
       ],
       [
         3.00979,
         76,
-        76
+        76,
+        true
       ],
       [
         3.009792,
         77,
-        77
+        77,
+        true
       ],
       [
         3.009795,
         78,
-        78
+        78,
+        false
       ],
       [
         3.019344,
         79,
-        79
+        79,
+        false
       ],
       [
         3.01935,
         80,
-        80
+        80,
+        false
       ],
       [
         3.152479,
         81,
-        81
+        81,
+        true
       ],
       [
         3.152485,
         82,
-        82
+        82,
+        true
       ],
       [
         3.152489,
         81,
-        81
+        81,
+        true
       ],
       [
         3.152491,
         82,
-        82
+        82,
+        true
       ],
       [
         3.152495,
         81,
-        81
+        81,
+        true
       ],
       [
         3.152497,
         82,
-        82
+        82,
+        true
       ],
       [
         3.168439,
         81,
-        81
+        81,
+        true
       ],
       [
         3.168445,
         82,
-        82
+        82,
+        true
       ],
       [
         3.168448,
         83,
-        83
+        83,
+        false
       ],
       [
         3.17805,
         84,
-        84
+        84,
+        false
       ],
       [
         3.178061,
         85,
-        85
+        85,
+        false
       ],
       [
         3.324654,
         86,
-        86
+        86,
+        false
       ],
       [
         3.32466,
         87,
-        87
+        87,
+        false
       ],
       [
         3.324664,
         86,
-        86
+        86,
+        true
       ],
       [
         3.324667,
         87,
-        87
+        87,
+        true
       ],
       [
         3.433734,
         92,
-        92
+        92,
+        false
       ],
       [
         3.841186,
         94,
-        94
+        94,
+        false
       ],
       [
         3.84119,
         95,
-        95
+        95,
+        false
       ],
       [
         3.841192,
         96,
-        96
+        96,
+        false
       ],
       [
         3.841195,
         94,
-        94
+        94,
+        true
       ],
       [
         3.841197,
         95,
-        95
+        95,
+        true
       ],
       [
         3.8412,
         96,
-        96
+        96,
+        true
       ],
       [
         3.841575,
         94,
-        94
+        94,
+        true
       ],
       [
         3.841581,
         95,
-        95
+        95,
+        true
       ],
       [
         3.841584,
         96,
-        96
+        96,
+        true
       ],
       [
         3.847629,
         94,
-        94
+        94,
+        true
       ],
       [
         3.847632,
         95,
-        95
+        95,
+        true
       ],
       [
         3.847635,
         96,
-        96
+        96,
+        true
       ],
       [
         3.915364,
         97,
-        97
+        97,
+        false
       ],
       [
         3.915367,
         98,
-        98
+        98,
+        false
       ],
       [
         3.917508,
         97,
-        97
+        97,
+        true
       ],
       [
         3.917512,
         98,
-        98
+        98,
+        true
       ],
       [
         4.025783,
         99,
-        99
+        99,
+        false
       ],
       [
         4.025789,
         100,
-        100
+        100,
+        false
       ],
       [
         4.247757,
         101,
-        101
+        101,
+        false
       ],
       [
         4.247763,
         102,
-        102
+        102,
+        false
       ],
       [
         4.247767,
         101,
-        101
+        101,
+        true
       ],
       [
         4.24777,
         102,
-        102
+        102,
+        true
       ],
       [
         4.247773,
         101,
-        101
+        101,
+        true
       ],
       [
         4.247776,
         102,
-        102
+        102,
+        true
       ],
       [
         4.247779,
         101,
-        101
+        101,
+        true
       ],
       [
         4.247782,
         102,
-        102
+        102,
+        true
       ],
       [
         4.248925,
         101,
-        101
+        101,
+        true
       ],
       [
         4.248929,
         102,
-        102
+        102,
+        true
       ],
       [
         4.260169,
         103,
-        103
+        103,
+        false
       ],
       [
         4.359063,
         104,
-        104
+        104,
+        false
       ],
       [
         4.359071,
         104,
-        104
+        104,
+        true
       ],
       [
         4.359074,
         104,
-        104
+        104,
+        true
       ],
       [
         4.359077,
         104,
-        104
+        104,
+        true
       ]
     ],
     "gap": [
@@ -2025,147 +2242,176 @@
       [
         0.010083,
         6,
-        6
+        6,
+        false
       ],
       [
         0.037939,
         7,
-        7
+        7,
+        false
       ],
       [
         0.040223,
         8,
-        8
+        8,
+        false
       ],
       [
         0.063742,
         9,
-        9
+        9,
+        false
       ],
       [
         0.111737,
         10,
-        10
+        10,
+        false
       ],
       [
         0.52844,
         11,
-        11
+        11,
+        false
       ],
       [
         1.138169,
         12,
-        12
+        12,
+        false
       ],
       [
         2.780137,
         13,
-        13
+        13,
+        false
       ],
       [
         4.232935,
         14,
-        14
+        14,
+        true
       ],
       [
         5.082196,
         15,
-        15
+        15,
+        false
       ],
       [
         5.082951,
         16,
-        16
+        16,
+        false
       ],
       [
         6.360242,
         17,
-        17
+        17,
+        false
       ],
       [
         10.76861,
         18,
-        18
+        18,
+        false
       ],
       [
         10.768621,
         19,
-        19
+        19,
+        false
       ],
       [
         10.768624,
         20,
-        20
+        20,
+        false
       ],
       [
         10.772672,
         19,
-        19
+        19,
+        true
       ],
       [
         10.772676,
         20,
-        20
+        20,
+        true
       ],
       [
         11.380774,
         21,
-        21
+        21,
+        false
       ],
       [
         13.227293,
         22,
-        22
+        22,
+        true
       ],
       [
         27.180105,
         23,
-        23
+        23,
+        false
       ],
       [
         27.3511,
         24,
-        24
+        24,
+        true
       ],
       [
         36.162743,
         25,
-        25
+        25,
+        false
       ],
       [
         39.223658,
         26,
-        26
+        26,
+        false
       ],
       [
         40.029254,
         27,
-        27
+        27,
+        false
       ],
       [
         40.037634,
         28,
-        28
+        28,
+        false
       ],
       [
         40.037638,
         29,
-        29
+        29,
+        false
       ],
       [
         40.042047,
         28,
-        28
+        28,
+        true
       ],
       [
         40.042051,
         29,
-        29
+        29,
+        true
       ],
       [
         44.259739,
         31,
-        31
+        31,
+        false
       ]
     ],
     "gap": [],
@@ -2315,8 +2561,8 @@
   {
     "id": "sequence-wrap",
     "title": "4095 to 0 wraparound",
-    "summary": "A fifteen-second interval where the BA SSN advances through 4086\u20134095 and continues at 0\u201310 without a graph discontinuity.",
-    "duration": 15.0,
+    "summary": "A fifteen-second interval where the BA SSN advances through 4086–4095 and continues at 0–10 without a graph discontinuity.",
+    "duration": 15,
     "verified": {
       "ba": 20,
       "bar": 0,
@@ -2473,137 +2719,164 @@
       [
         0.126724,
         53,
-        4149
+        4149,
+        false
       ],
       [
         0.613304,
         54,
-        4150
+        4150,
+        false
       ],
       [
         2.584062,
         55,
-        4151
+        4151,
+        false
       ],
       [
         4.225063,
         56,
-        4152
+        4152,
+        false
       ],
       [
         4.225073,
         57,
-        4153
+        4153,
+        false
       ],
       [
         4.225083,
         58,
-        4154
+        4154,
+        false
       ],
       [
         4.632066,
         59,
-        4155
+        4155,
+        false
       ],
       [
         5.492115,
         60,
-        4156
+        4156,
+        false
       ],
       [
         6.474874,
         61,
-        4157
+        4157,
+        false
       ],
       [
         8.113905,
         62,
-        4158
+        4158,
+        false
       ],
       [
         10.570563,
         63,
-        4159
+        4159,
+        false
       ],
       [
         11.137103,
         64,
-        4160
+        4160,
+        false
       ],
       [
         11.141081,
         65,
-        4161
+        4161,
+        false
       ],
       [
         11.141084,
         66,
-        4162
+        4162,
+        false
       ],
       [
         11.141092,
         65,
-        4161
+        4161,
+        true
       ],
       [
         11.141095,
         66,
-        4162
+        4162,
+        true
       ],
       [
         11.14127,
         65,
-        4161
+        4161,
+        true
       ],
       [
         11.141275,
         66,
-        4162
+        4162,
+        true
       ],
       [
         11.141966,
         65,
-        4161
+        4161,
+        true
       ],
       [
         11.141972,
         66,
-        4162
+        4162,
+        true
       ],
       [
         12.520657,
         67,
-        4163
+        4163,
+        false
       ],
       [
         13.26839,
         68,
-        4164
+        4164,
+        false
       ],
       [
         13.642897,
         69,
-        4165
+        4165,
+        false
       ],
       [
         13.918129,
         70,
-        4166
+        4166,
+        false
       ],
       [
         13.918158,
         71,
-        4167
+        4167,
+        false
       ],
       [
         14.260597,
         72,
-        4168
+        4168,
+        false
       ],
       [
         14.8697,
         73,
-        4169
+        4169,
+        false
       ]
     ],
     "gap": [],
@@ -2770,25 +3043,87 @@
       "agreement": 3
     },
     "ba": [
-      [0.031256, 1, 1, 65, "0000000000000000", false]
+      [
+        0.031256,
+        1,
+        1,
+        65,
+        "0000000000000000",
+        false
+      ]
     ],
     "bar": [
-      [0.031248, 1, 1]
+      [
+        0.031248,
+        1,
+        1
+      ]
     ],
     "mpdu": [
-      [0.028508, 0, 0],
-      [0.067195, 1, 1],
-      [0.095229, 2, 2],
-      [0.138274, 3, 3],
-      [0.162807, 4, 4],
-      [0.217554, 5, 5]
+      [
+        0.028508,
+        0,
+        0,
+        false
+      ],
+      [
+        0.067195,
+        1,
+        1,
+        false
+      ],
+      [
+        0.095229,
+        2,
+        2,
+        false
+      ],
+      [
+        0.138274,
+        3,
+        3,
+        false
+      ],
+      [
+        0.162807,
+        4,
+        4,
+        false
+      ],
+      [
+        0.217554,
+        5,
+        5,
+        false
+      ]
     ],
     "gap": [],
     "span": [],
     "agreement": [
-      [0.016846, "request", "ADDBA Req", 12118, false, "00:90:4c:0d:c5:4b → 00:e0:4c:0c:01:ad · TID 0 · dialog token 2 · proposed SSN 0 · immediate BA · 64 buffers · display-only; does not reset analysis history"],
-      [0.017965, "accepted", "ADDBA OK", 12120, false, "00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b · TID 0 · dialog token 2 · status success · starts a new agreement and clears prior-set and persistent-hole history; later response retries are collapsed"],
-      [0.279295, "delba", "DELBA", 12192, false, "00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b · TID 0 · Initiator bit 0 · reason 39: requested from peer STA due to timeout · ends the agreement and clears analysis history"]
+      [
+        0.016846,
+        "request",
+        "ADDBA Req",
+        12118,
+        false,
+        "00:90:4c:0d:c5:4b → 00:e0:4c:0c:01:ad · TID 0 · dialog token 2 · proposed SSN 0 · immediate BA · 64 buffers · display-only; does not reset analysis history"
+      ],
+      [
+        0.017965,
+        "accepted",
+        "ADDBA OK",
+        12120,
+        false,
+        "00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b · TID 0 · dialog token 2 · status success · starts a new agreement and clears prior-set and persistent-hole history; later response retries are collapsed"
+      ],
+      [
+        0.279295,
+        "delba",
+        "DELBA",
+        12192,
+        false,
+        "00:e0:4c:0c:01:ad → 00:90:4c:0d:c5:4b · TID 0 · Initiator bit 0 · reason 39: requested from peer STA due to timeout · ends the agreement and clears analysis history"
+      ]
     ]
   }
 ]</script>
@@ -2808,7 +3143,7 @@
     const ph = H - margins.top - margins.bottom;
     const layerIds = ['labels', 'deltas', 'gaps', 'mpdus', 'persistent', 'set', 'holes', 'agreements'];
     const colors = {
-      blue: '#155e93', orange: '#d56b08', purple: '#7a3ea1', green: '#16833d',
+      blue: '#155e93', orange: '#d56b08', retryOrange: '#ce5c00', purple: '#7a3ea1', green: '#16833d',
       red: '#c9362b', darkRed: '#8e1c19', gold: '#f0b429', graphite: '#53606c',
       gray: '#686c69', grayFill: '#babdb6'
     };
@@ -2935,8 +3270,10 @@
         const fcsDetail = badFcs ? ' · explicit FCS error; plotted gray' : '';
         interactive(point, `BA ${index + 1}: ${duration(t)} · SSN ${ssn} · unwrapped ${u} · upper bound ${upper} · ${setCount} set bit${setCount === 1 ? '' : 's'}${fcsDetail}.`);
         root.append(point);
-        root.append(el('circle', { cx: x(t), cy: y(upper), r: badFcs ? 3.5 : 2.8, fill: badFcs ? colors.gray : colors.orange }));
-        if (layer('labels')) root.append(el('text', { x: x(t), y: y(u) + 16, 'text-anchor': 'middle', fill: badFcs ? colors.gray : colors.blue, 'font-size': 11 }, ssn));
+        if (badFcs) {
+          root.append(el('circle', { cx: x(t), cy: y(upper), r: 3.5, fill: colors.gray }));
+        }
+        if (layer('labels')) root.append(el('text', { x: x(t), y: y(u) + 16, 'text-anchor': 'middle', fill: badFcs ? colors.gray : colors.blue, 'font-size': 11 }, `${ssn} (${setCount})`));
         if (layer('deltas') && index > 0) {
           const delta = t - c.ba[index - 1][0];
           root.append(el('text', { x: (x(t) + x(c.ba[index - 1][0])) / 2, y: y(u) - 9, 'text-anchor': 'middle', fill: '#34434f', 'font-size': 10 }, `Δt ${duration(delta)}`));
@@ -3039,8 +3376,15 @@
       if (layer('mpdus')) c.mpdu.forEach((item, index) => {
         if (!inView(item[0], item[2])) return;
         const px = x(item[0]), py = y(item[2]);
-        const point = el('path', { d: `M ${px} ${py - 5} L ${px + 5} ${py} L ${px} ${py + 5} L ${px - 5} ${py} Z`, fill: colors.gold, stroke: '#604d13', 'stroke-width': 1.6 });
-        interactive(point, `Captured MPDU ${index + 1}: ${duration(item[0])} · sequence ${item[1]} · unwrapped ${item[2]}. Capture presence does not prove reception.`);
+        const retry = Boolean(item[3]);
+        const radius = retry ? 4.5 : 3.5;
+        const point = el('path', {
+          d: `M ${px} ${py - radius} L ${px + radius} ${py} L ${px} ${py + radius} L ${px - radius} ${py} Z`,
+          fill: retry ? 'none' : colors.gold,
+          stroke: retry ? colors.retryOrange : '#604d13',
+          'stroke-width': retry ? 1.75 : 1.2
+        });
+        interactive(point, `Captured MPDU ${index + 1}: ${duration(item[0])} · sequence ${item[1]} · unwrapped ${item[2]} · Retry bit ${retry ? 'set' : 'clear'}. Capture presence does not prove reception.`);
         root.append(point);
       });
       if (layer('persistent')) c.span.forEach((item, index) => {
@@ -3058,6 +3402,7 @@
         ba: c.ba.filter(item => inView(item[0], item[2])).length,
         bar: c.bar.filter(item => inView(item[0], item[2])).length,
         mpdu: c.mpdu.filter(item => inView(item[0], item[2])).length,
+        retryMpdu: c.mpdu.filter(item => item[3] && inView(item[0], item[2])).length,
         set: generated.sets.filter(item => inView(item.t, item.seq)).length,
         prior: generated.priorSetZeros.filter(item => inView(item.t, item.seq)).length,
         hole: generated.holes.filter(item => inView(item.t, item.seq)).length,
@@ -3070,13 +3415,14 @@
     }
     function updateSummary(c) {
       const n = counts(c);
-      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · ${n.agreement} ADDBA/DELBA events · ${n.inferredReset} inferred SSN resets · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots · ${n.badFcs} explicit-FCS-error BAs.`;
+      const retryRate = n.mpdu > 0 ? `${(100 * n.retryMpdu / n.mpdu).toFixed(1)}%` : 'n/a';
+      summary.textContent = `X-axis duration: ${duration(view.x1 - view.x0)} · In view: ${n.ba} BA / ${n.bar} BAR · ${n.mpdu} captured MPDU${n.mpdu === 1 ? '' : 's'} · Observed MPDU retries: ${n.retryMpdu} / ${n.mpdu} (${retryRate}) · ${n.agreement} ADDBA/DELBA events · ${n.inferredReset} inferred SSN resets · ${n.set} bitmap-set positions · ${n.hole} bitmap holes · ${n.prior} prior-set zeros · ${n.span} persistent-hole lifetimes · ${n.gap} no-BA-ACK-before-advance dots · ${n.badFcs} explicit-FCS-error BAs.`;
     }
     function updateTable(c) {
       const events = [];
       c.ba.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BA', item[0], wrap(item[2]), `BA ${i + 1}; upper ${wrap(item[3])}${item[5] ? '; explicit FCS error; plotted gray' : ''}`]); });
       c.bar.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['BAR', item[0], wrap(item[2]), `BAR ${i + 1}`]); });
-      c.mpdu.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['MPDU', item[0], wrap(item[2]), `MPDU ${i + 1}`]); });
+      c.mpdu.forEach((item, i) => { if (inView(item[0], item[2])) events.push(['MPDU', item[0], wrap(item[2]), `MPDU ${i + 1}; Retry ${item[3] ? 'set' : 'clear'}`]); });
       c.span.forEach((item, i) => { if (item[0] <= view.x1 && item[1] >= view.x0 && item[2] >= view.y0 && item[2] <= view.y1) events.push(['Persistent hole', item[1], wrap(item[2]), `${item[3]} BAs; ${item[4]}`]); });
       (c.agreement || []).forEach(item => {
         if (item[0] >= view.x0 && item[0] <= view.x1) events.push([item[2], item[0], '—', `Frame ${item[3]}; ${item[5]}${item[4] ? '; explicit FCS error; plotted gray' : ''}`]);

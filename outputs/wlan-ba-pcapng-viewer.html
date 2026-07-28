@@ -1,0 +1,3189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; worker-src blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>WLAN Block Ack Graph Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --window: #f2f2f2;
+      --panel: #ffffff;
+      --ink: #202124;
+      --muted: #60656c;
+      --border: #aeb4bb;
+      --soft-border: #cdd2d7;
+      --control: #fbfbfb;
+      --control-hover: #f0f4f7;
+      --focus: #0078d4;
+      --selected: #dbeeff;
+      --blue: #3465a4;
+      --blue-dark: #204a87;
+      --orange: #f57900;
+      --purple: #5c3566;
+      --purple-fill: #75507b;
+      --green: #4e9a06;
+      --red: #ef2929;
+      --dark-red: #cc0000;
+      --gold: #fce94f;
+      --gold-edge: #725000;
+      --graphite: #555753;
+      --gray-fill: #babdb6;
+      --grid: #e0e3e6;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      color: var(--ink);
+      background: #dfe3e7;
+      font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+
+    button, select, input { font: inherit; }
+
+    button:focus-visible,
+    select:focus-visible,
+    input:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .dialog {
+      width: min(1540px, 100%);
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid #8c939a;
+      border-radius: 8px;
+      background: var(--window);
+      box-shadow: 0 18px 45px rgb(34 43 52 / 24%);
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 45px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--soft-border);
+      background: linear-gradient(#fafafa, #e8e8e8);
+    }
+
+    .titlebar h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .capture-meta {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    main {
+      display: grid;
+      gap: 9px;
+      padding: 12px;
+    }
+
+    .file-row,
+    .selector-row {
+      display: grid;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .file-row {
+      grid-template-columns: auto minmax(260px, .75fr) minmax(240px, 1fr) auto;
+    }
+
+    .selector-row {
+      grid-template-columns: auto minmax(280px, 1fr) auto minmax(180px, auto);
+    }
+
+    label { user-select: none; }
+
+    input[type="file"],
+    select {
+      width: 100%;
+      min-height: 30px;
+      padding: 3px 30px 3px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--ink);
+      background: var(--control);
+    }
+
+    input[type="file"] {
+      padding: 3px 6px;
+    }
+
+    .load-status {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .plot-frame {
+      position: relative;
+      overflow: hidden;
+      min-height: 440px;
+      height: clamp(440px, 62vh, 720px);
+      border: 1px solid #8c939a;
+      background: var(--panel);
+    }
+
+    #plot {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: var(--panel);
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .plot-state {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 8px;
+      padding: 24px;
+      color: var(--ink);
+      background: var(--panel);
+      text-align: center;
+    }
+
+    .plot-state[hidden] { display: none; }
+
+    .plot-state progress {
+      width: min(360px, 72vw);
+      height: 14px;
+    }
+
+    .state-message {
+      max-width: 620px;
+      color: var(--muted);
+    }
+
+    .state-error { color: var(--dark-red); }
+
+    .plot-frame:focus-within {
+      box-shadow: inset 0 0 0 2px var(--focus);
+    }
+
+    #plot:focus-visible { outline: none; }
+
+    .plot-tooltip {
+      position: absolute;
+      z-index: 4;
+      display: none;
+      max-width: min(390px, calc(100% - 20px));
+      padding: 6px 8px;
+      border: 1px solid #7c848c;
+      border-radius: 4px;
+      color: var(--ink);
+      background: rgb(255 255 255 / 96%);
+      box-shadow: 0 3px 12px rgb(0 0 0 / 18%);
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    .detail,
+    .status {
+      min-height: 24px;
+      margin: 0;
+      padding: 3px 2px;
+      overflow-wrap: anywhere;
+    }
+
+    .detail { color: #34383c; }
+
+    .status {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .interaction-help {
+      margin: -4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+    }
+
+    .control-label { font-weight: 600; }
+
+    .choice {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .choice input { margin: 0; }
+
+    .button-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding-top: 2px;
+    }
+
+    button {
+      min-width: 86px;
+      min-height: 30px;
+      padding: 4px 13px;
+      border: 1px solid #9299a0;
+      border-radius: 4px;
+      color: var(--ink);
+      background: linear-gradient(#ffffff, #ececec);
+      cursor: pointer;
+    }
+
+    button:hover { background: var(--control-hover); }
+    button:active { background: #e1e6ea; }
+    button.primary { border-color: #6d7883; }
+    button:disabled, select:disabled, input:disabled {
+      cursor: not-allowed;
+      opacity: .58;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 900px) {
+      body { padding: 0; background: var(--window); }
+      .dialog { border: 0; border-radius: 0; box-shadow: none; }
+      .titlebar { align-items: flex-start; flex-direction: column; gap: 2px; }
+      .capture-meta { max-width: 100%; text-align: left; }
+      .file-row { grid-template-columns: auto minmax(0, 1fr); }
+      .file-row .load-status { grid-column: 2; }
+      .file-row button { grid-column: 2; justify-self: end; }
+      .selector-row { grid-template-columns: auto minmax(0, 1fr); }
+      .plot-frame { height: 56vh; min-height: 380px; }
+    }
+
+    @media (max-width: 520px) {
+      main { padding: 9px; }
+      .file-row,
+      .selector-row { grid-template-columns: 1fr; gap: 4px; }
+      .file-row .load-status,
+      .file-row button { grid-column: auto; }
+      .selector-row label { font-weight: 600; }
+      .plot-frame { min-height: 360px; }
+      .button-row { justify-content: stretch; }
+      .button-row button { flex: 1; min-width: 0; }
+    }
+
+    @media print {
+      body { padding: 0; background: #fff; }
+      .dialog { border: 0; box-shadow: none; }
+      .titlebar { background: #fff; }
+      .file-row, .selector-row, .control-row, .button-row { display: none; }
+      .plot-frame { height: 700px; }
+    }
+  </style>
+</head>
+<body>
+  <section class="dialog" aria-labelledby="dialog-title">
+    <header class="titlebar">
+      <h1 id="dialog-title">WLAN Block Ack Graph</h1>
+      <div class="capture-meta" id="capture-meta">No capture loaded</div>
+    </header>
+
+    <main>
+      <div class="file-row">
+        <label for="capture-file">Capture file:</label>
+        <input id="capture-file" type="file" accept=".pcap,.pcapng,application/vnd.tcpdump.pcap,application/x-pcapng,application/octet-stream">
+        <span class="load-status" id="load-status" role="status" aria-live="polite" aria-atomic="true">Choose a local PCAPNG or PCAP file. The capture stays on this device.</span>
+        <button id="cancel-load" type="button" hidden>Cancel</button>
+      </div>
+
+      <div class="selector-row">
+        <label for="pair-select">BA pair (TA → RA):</label>
+        <select id="pair-select" aria-describedby="pair-help" disabled></select>
+        <span class="sr-only" id="pair-help">Pair direction follows Block Ack responses. Matching Block Ack Requests travel in reverse.</span>
+        <label for="tid-select">TID:</label>
+        <select id="tid-select" disabled></select>
+      </div>
+
+      <div class="plot-frame" id="plot-frame" aria-busy="false">
+        <div class="plot-state" id="plot-state">
+          <strong id="state-title">No capture loaded</strong>
+          <span class="state-message" id="state-message">Choose a local PCAPNG or PCAP file above.</span>
+          <progress id="load-progress" max="100" hidden></progress>
+          <span class="state-error" id="load-error" role="alert" hidden></span>
+        </div>
+        <canvas id="plot" tabindex="-1" role="application" aria-disabled="true" aria-label="Interactive WLAN Block Ack graph showing capture-relative time against unwrapped 12-bit sequence number" aria-describedby="plot-help status detail"></canvas>
+        <div class="plot-tooltip" id="plot-tooltip" role="tooltip"></div>
+      </div>
+
+      <p class="detail" id="detail" aria-live="polite">Block Ack responses drive the acknowledgment analysis. Bitmap zeros mean “not acknowledged in this BA”; they do not prove transmission or packet loss.</p>
+      <p class="status" id="status"></p>
+      <p class="interaction-help" id="plot-help">Plot controls: drag to pan; choose Zoom and drag a rectangle; use the wheel over the plot or an axis. Keyboard: Z toggles Drag/Zoom, X and Y zoom in, Shift+X and Shift+Y zoom out, Home resets, and arrow keys pan.</p>
+
+      <div class="control-row" aria-label="Mouse interaction mode">
+        <span class="control-label">Mouse:</span>
+        <label class="choice"><input type="radio" name="mouse-mode" value="drag" checked disabled> Drag</label>
+        <label class="choice"><input type="radio" name="mouse-mode" value="zoom" disabled> Zoom</label>
+      </div>
+
+      <div class="control-row" aria-label="Display layers">
+        <label class="choice" title="Labels are formatted as SSN (bitmap set bits)."><input id="show-labels" type="checkbox" disabled> Show SSN labels</label>
+        <label class="choice"><input id="show-deltas" type="checkbox" disabled> Show BA time deltas</label>
+        <label class="choice"><input id="show-gaps" type="checkbox" disabled> Show BA ACK gaps</label>
+        <label class="choice"><input id="show-mpdus" type="checkbox" disabled> Show captured MPDUs</label>
+        <label class="choice"><input id="show-persistent" type="checkbox" disabled> Show persistent-hole aging</label>
+        <label class="choice"><input id="show-set" type="checkbox" checked disabled> Show bitmap set</label>
+        <label class="choice"><input id="show-holes" type="checkbox" disabled> Show bitmap holes</label>
+        <label class="choice"><input id="show-agreements" type="checkbox" checked disabled> Show ADDBA/DELBA events</label>
+      </div>
+
+      <div class="button-row">
+        <button type="button" id="save" disabled>Export PNG</button>
+        <button type="button" id="reset" class="primary" disabled>Reset Graph</button>
+      </div>
+    </main>
+  </section>
+
+  <script id="parser-source">/*
+ * Standalone PCAP/PCAPNG -> WLAN Block Ack graph data parser.
+ *
+ * Browser:
+ *   const model = await WlanBaCaptureParser.parse(file, {
+ *     onProgress: ({ bytesRead, totalBytes, packets }) => { ... }
+ *   });
+ *
+ * Node/CommonJS (for validation):
+ *   const parser = require("./.pcapng-ba-parser.js");
+ *   const model = await parser.parse(buffer, { filename: "capture.pcapng" });
+ *
+ * Supported packet encapsulations:
+ *   LINKTYPE_IEEE802_11 (105)
+ *   LINKTYPE_IEEE802_11_RADIOTAP (127)
+ *
+ * The returned {meta, totals, sessions} shape matches the embedded data used
+ * by wlan-ba-graph-simulator-WQCPC-13082.html. A diagnostics member is added
+ * for import warnings and can be ignored by the plotter.
+ *
+ * Compact per-session arrays:
+ *   samples: [seconds, frame, kind, baType, ssn, bitmapHex, badFcs]
+ *            kind 0 = BA response, 1 = BAR request
+ *   mpdus:   [seconds, frame, sequence, retry]
+ *   events:  [seconds, frame, type, badFcs, senderIsOriginator,
+ *             dialogToken, statusCode, reasonCode, proposedSsn]
+ */
+(function installWlanBaCaptureParser(root) {
+  'use strict';
+
+  const LINKTYPE_IEEE802_11 = 105;
+  const LINKTYPE_IEEE802_11_RADIOTAP = 127;
+  const PCAPNG_SHB = 0x0a0d0d0a;
+  const PCAPNG_IDB = 0x00000001;
+  const PCAPNG_PB = 0x00000002;
+  const PCAPNG_SPB = 0x00000003;
+  const PCAPNG_EPB = 0x00000006;
+  const OPT_END = 0;
+  const OPT_IDB_TSRESOL = 9;
+  const OPT_IDB_FCSLEN = 13;
+  const OPT_IDB_TSOFFSET = 14;
+  const OPT_EPB_FLAGS = 2;
+  const EPB_FLAG_CRC_ERROR = 0x01000000;
+  const BA_BASIC = 0;
+  const BA_EXTENDED_COMPRESSED = 1;
+  const BA_COMPRESSED = 2;
+  const BA_MULTI_TID = 3;
+  const MANAGEMENT_RETRY_DEDUP_SECONDS = 1.0;
+  const SUPPORTED_LINKTYPES = new Set([
+    LINKTYPE_IEEE802_11,
+    LINKTYPE_IEEE802_11_RADIOTAP
+  ]);
+  const HEX = Array.from({ length: 256 }, (_, value) =>
+    value.toString(16).padStart(2, '0')
+  );
+
+  class CaptureParseError extends Error {
+    constructor(message, offset) {
+      super(offset == null ? message : `${message} at file offset ${offset}`);
+      this.name = 'CaptureParseError';
+      this.offset = offset == null ? null : offset;
+    }
+  }
+
+  function align4(value) {
+    return Math.ceil(value / 4) * 4;
+  }
+
+  function alignOffset(value, alignment) {
+    return (value + alignment - 1) & ~(alignment - 1);
+  }
+
+  function u16le(bytes, offset) {
+    return bytes[offset] | (bytes[offset + 1] << 8);
+  }
+
+  function u32le(bytes, offset) {
+    return (
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)
+    ) >>> 0;
+  }
+
+  function macAddress(bytes, offset) {
+    return (
+      HEX[bytes[offset]] + ':' +
+      HEX[bytes[offset + 1]] + ':' +
+      HEX[bytes[offset + 2]] + ':' +
+      HEX[bytes[offset + 3]] + ':' +
+      HEX[bytes[offset + 4]] + ':' +
+      HEX[bytes[offset + 5]]
+    );
+  }
+
+  function bytesToHex(bytes, start, length) {
+    let result = '';
+    const end = start + length;
+    for (let offset = start; offset < end; offset++) result += HEX[bytes[offset]];
+    return result;
+  }
+
+  function sessionKey(ta, ra, tid) {
+    return `${ta}|${ra}|${tid}`;
+  }
+
+  function roundedTime(value, digits) {
+    return Number(value.toFixed(digits == null ? 9 : digits));
+  }
+
+  function makeAbortError() {
+    if (typeof DOMException === 'function') {
+      return new DOMException('Capture import was cancelled', 'AbortError');
+    }
+    const error = new Error('Capture import was cancelled');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  function checkAbort(signal) {
+    if (signal && signal.aborted) throw makeAbortError();
+  }
+
+  function makeState(byteLength, options) {
+    return {
+      byteLength,
+      options,
+      format: '',
+      packetCount: 0,
+      packetTimes: [],
+      sessions: [],
+      sessionMap: new Map(),
+      capturedMpdus: new Map(),
+      agreementEvents: new Map(),
+      agreementRetryTimes: new Map(),
+      agreementRetryFrames: new Map(),
+      frequencyCounts: new Map(),
+      firstFrequency: null,
+      outputTimeDigits: 0,
+      totals: {
+        ba: 0,
+        bar: 0,
+        unsupportedBa: 0,
+        unsupportedBar: 0,
+        malformedBa: 0,
+        malformedBar: 0
+      },
+      diagnostics: {
+        format: '',
+        warnings: [],
+        unsupportedLinktypes: [],
+        skippedUnsupportedLinktypePackets: 0,
+        malformedLinkHeaders: 0,
+        untimestampedPackets: 0,
+        explicitBadFcsPackets: 0,
+        computedBadFcsPackets: 0,
+        duplicateAgreementRetries: 0,
+        interfaces: []
+      },
+      warningSet: new Set(),
+      unsupportedLinktypeSet: new Set()
+    };
+  }
+
+  function warn(state, message) {
+    if (state.warningSet.has(message)) return;
+    state.warningSet.add(message);
+    state.diagnostics.warnings.push(message);
+  }
+
+  function registerFrequency(state, frequency) {
+    if (!Number.isInteger(frequency) || frequency <= 0) return;
+    if (state.firstFrequency == null) state.firstFrequency = frequency;
+    state.frequencyCounts.set(
+      frequency,
+      (state.frequencyCounts.get(frequency) || 0) + 1
+    );
+  }
+
+  function radiotapMetadata(packet) {
+    if (packet.length < 8 || packet[0] !== 0) return null;
+    const headerLength = u16le(packet, 2);
+    if (headerLength < 8 || headerLength > packet.length) return null;
+
+    const presentWords = [];
+    let presentOffset = 4;
+    while (true) {
+      if (presentOffset + 4 > headerLength || presentWords.length >= 64) return null;
+      const word = u32le(packet, presentOffset);
+      presentWords.push(word);
+      presentOffset += 4;
+      if ((word & 0x80000000) === 0) break;
+    }
+
+    // Flags and Channel are fields 1 and 3 in the first radiotap namespace.
+    // They precede namespace/vendor fields, so only fields 0..3 must be walked.
+    const firstWord = presentWords[0];
+    let fieldOffset = presentOffset;
+    let flags = null;
+    let frequencyMHz = null;
+    if (firstWord & 0x00000001) {
+      fieldOffset = alignOffset(fieldOffset, 8);
+      fieldOffset += 8;
+    }
+    if (firstWord & 0x00000002) {
+      if (fieldOffset + 1 > headerLength) return null;
+      flags = packet[fieldOffset];
+      fieldOffset += 1;
+    }
+    if (firstWord & 0x00000004) {
+      if (fieldOffset + 1 > headerLength) return null;
+      fieldOffset += 1;
+    }
+    if (firstWord & 0x00000008) {
+      fieldOffset = alignOffset(fieldOffset, 2);
+      if (fieldOffset + 4 > headerLength) return null;
+      frequencyMHz = u16le(packet, fieldOffset);
+    }
+
+    return {
+      headerLength,
+      flags,
+      frequencyMHz,
+      hasFcs: flags != null && (flags & 0x10) !== 0,
+      badFcs: flags != null && (flags & 0x40) !== 0
+    };
+  }
+
+  let crcTable = null;
+
+  function getCrcTable() {
+    if (crcTable) return crcTable;
+    crcTable = new Uint32Array(256);
+    for (let value = 0; value < 256; value++) {
+      let crc = value;
+      for (let bit = 0; bit < 8; bit++) {
+        crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+      }
+      crcTable[value] = crc >>> 0;
+    }
+    return crcTable;
+  }
+
+  function ieee80211Crc32(bytes, start, end) {
+    const table = getCrcTable();
+    let crc = 0xffffffff;
+    for (let offset = start; offset < end; offset++) {
+      crc = table[(crc ^ bytes[offset]) & 0xff] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function getSession(state, ta, ra, tid) {
+    const key = sessionKey(ta, ra, tid);
+    let session = state.sessionMap.get(key);
+    if (!session) {
+      session = {
+        key,
+        ta,
+        ra,
+        tid,
+        baCount: 0,
+        barCount: 0,
+        samples: []
+      };
+      state.sessionMap.set(key, session);
+      state.sessions.push(session);
+    }
+    return session;
+  }
+
+  function appendMapped(map, key, value) {
+    let values = map.get(key);
+    if (!values) {
+      values = [];
+      map.set(key, values);
+    }
+    values.push(value);
+  }
+
+  function parseBlockAckFrame(bytes, start, end, fc, subtype, frame, time, badFcs, state) {
+    const isRequest = subtype === 8;
+    const totalName = isRequest ? 'bar' : 'ba';
+    const unsupportedName = isRequest ? 'unsupportedBar' : 'unsupportedBa';
+    const malformedName = isRequest ? 'malformedBar' : 'malformedBa';
+    state.totals[totalName]++;
+
+    if (end - start < 20) {
+      state.totals[malformedName]++;
+      return;
+    }
+
+    const ra = macAddress(bytes, start + 4);
+    const ta = macAddress(bytes, start + 10);
+    const control = u16le(bytes, start + 16);
+    const baType = (control & 0x001e) >>> 1;
+    if (
+      baType !== BA_BASIC &&
+      baType !== BA_EXTENDED_COMPRESSED &&
+      baType !== BA_COMPRESSED &&
+      baType !== BA_MULTI_TID
+    ) {
+      state.totals[unsupportedName]++;
+      return;
+    }
+
+    const entries = [];
+    let offset = start + 18;
+    const addEntry = (tid, ssn, bitmapStart, bitmapLength) => {
+      if (
+        tid < 0 || tid > 15 ||
+        offset > end ||
+        (!isRequest && bitmapStart + bitmapLength > end)
+      ) {
+        return false;
+      }
+      entries.push({
+        tid,
+        ssn,
+        bitmapHex: isRequest ? '' : bytesToHex(bytes, bitmapStart, bitmapLength)
+      });
+      return true;
+    };
+
+    let valid = true;
+    if (baType === BA_MULTI_TID) {
+      const tidCount = ((control & 0xf000) >>> 12) + 1;
+      for (let index = 0; index < tidCount && valid; index++) {
+        const required = isRequest ? 4 : 12;
+        if (offset + required > end) {
+          valid = false;
+          break;
+        }
+        const tid = bytes[offset] & 0x0f;
+        const ssc = u16le(bytes, offset + 2);
+        valid = addEntry(tid, ssc >>> 4, offset + 4, 8);
+        offset += required;
+      }
+    } else {
+      if (offset + 2 > end) {
+        valid = false;
+      } else {
+        const tid = (control & 0xf000) >>> 12;
+        const ssc = u16le(bytes, offset);
+        const fragment = ssc & 0x0f;
+        const ssn = ssc >>> 4;
+        offset += 2;
+        let bitmapLength = 0;
+        if (!isRequest) {
+          if (baType === BA_BASIC) {
+            bitmapLength = 128;
+          } else if (baType === BA_EXTENDED_COMPRESSED) {
+            bitmapLength = 8;
+          } else if (((fragment & 0x06) >>> 1) === 2) {
+            bitmapLength = 32;
+          } else if (fragment === 0x08) {
+            bitmapLength = 64;
+          } else if (fragment === 0x0a) {
+            bitmapLength = 128;
+          } else {
+            bitmapLength = 8;
+          }
+        }
+        valid = addEntry(tid, ssn, offset, bitmapLength);
+      }
+    }
+
+    if (!valid || entries.length === 0) {
+      state.totals[malformedName]++;
+      return;
+    }
+
+    for (const entry of entries) {
+      // BAR is sent opposite to the Block Ack response. Normalize every
+      // session to the Block Ack TA -> RA direction.
+      const sessionTa = isRequest ? ra : ta;
+      const sessionRa = isRequest ? ta : ra;
+      const session = getSession(state, sessionTa, sessionRa, entry.tid);
+      if (isRequest) session.barCount++;
+      else session.baCount++;
+      session.samples.push([
+        time,
+        frame,
+        isRequest ? 1 : 0,
+        baType,
+        entry.ssn,
+        entry.bitmapHex,
+        Boolean(badFcs)
+      ]);
+    }
+  }
+
+  function parseQosMpdu(bytes, start, end, fc, subtype, frame, time, state) {
+    if (subtype < 8 || subtype > 11 || end - start < 26) return;
+    const toDs = (fc & 0x0100) !== 0;
+    const fromDs = (fc & 0x0200) !== 0;
+    const qosOffset = start + (toDs && fromDs ? 30 : 24);
+    if (qosOffset + 2 > end || start + 24 > end) return;
+
+    const ra = macAddress(bytes, start + 4);
+    const ta = macAddress(bytes, start + 10);
+    const sequence = u16le(bytes, start + 22) >>> 4;
+    const tid = u16le(bytes, qosOffset) & 0x0f;
+    const retry = (fc & 0x0800) !== 0;
+    // QoS Data travels opposite to the Block Ack response.
+    appendMapped(
+      state.capturedMpdus,
+      sessionKey(ra, ta, tid),
+      [time, frame, sequence, retry]
+    );
+  }
+
+  function parseAgreementAction(bytes, start, end, fc, subtype, frame, time, badFcs, state) {
+    if (subtype !== 13 || end - start < 26 || (fc & 0x4000) !== 0) return;
+    const bodyOffset = start + 24 + ((fc & 0x8000) !== 0 ? 4 : 0);
+    if (bodyOffset + 2 > end || bytes[bodyOffset] !== 3) return;
+    const action = bytes[bodyOffset + 1];
+    if (action !== 0 && action !== 1 && action !== 2) return;
+
+    const sender = macAddress(bytes, start + 10);
+    const receiver = macAddress(bytes, start + 4);
+    const managementSequence = u16le(bytes, start + 22) >>> 4;
+    const retry = (fc & 0x0800) !== 0;
+    let tid;
+    let senderIsOriginator = false;
+    let dialogToken = null;
+    let statusCode = null;
+    let reasonCode = null;
+    let startingSequence = null;
+    let type;
+    let actionDetail;
+    let initiatorForSignature = 0;
+
+    if (action === 0) {
+      if (bodyOffset + 9 > end) return;
+      dialogToken = bytes[bodyOffset + 2];
+      const parameters = u16le(bytes, bodyOffset + 3);
+      tid = (parameters & 0x003c) >>> 2;
+      startingSequence = u16le(bytes, bodyOffset + 7) >>> 4;
+      type = 'request';
+      actionDetail = dialogToken;
+    } else if (action === 1) {
+      if (bodyOffset + 9 > end) return;
+      dialogToken = bytes[bodyOffset + 2];
+      statusCode = u16le(bytes, bodyOffset + 3);
+      const parameters = u16le(bytes, bodyOffset + 5);
+      tid = (parameters & 0x003c) >>> 2;
+      type = statusCode === 0 ? 'accepted' : 'rejected';
+      actionDetail = dialogToken;
+    } else {
+      if (bodyOffset + 6 > end) return;
+      const parameters = u16le(bytes, bodyOffset + 2);
+      tid = (parameters & 0xf000) >>> 12;
+      senderIsOriginator = (parameters & 0x0800) !== 0;
+      reasonCode = u16le(bytes, bodyOffset + 4);
+      type = 'delba';
+      actionDetail = reasonCode;
+      initiatorForSignature = senderIsOriginator ? 1 : 0;
+    }
+
+    let sessionTa;
+    let sessionRa;
+    if (action === 0 || senderIsOriginator) {
+      sessionTa = receiver;
+      sessionRa = sender;
+    } else {
+      sessionTa = sender;
+      sessionRa = receiver;
+    }
+    const key = sessionKey(sessionTa, sessionRa, tid);
+
+    const retryTime = time == null ? frame * 0.000001 : time;
+    const signature = [
+      key,
+      action,
+      sender,
+      managementSequence,
+      actionDetail,
+      initiatorForSignature,
+      statusCode == null ? '-' : statusCode
+    ].join('|');
+    const priorTime = state.agreementRetryTimes.get(signature);
+    const duplicateRetry =
+      retry &&
+      priorTime != null &&
+      retryTime >= priorTime &&
+      retryTime - priorTime <= MANAGEMENT_RETRY_DEDUP_SECONDS;
+    if (priorTime == null || retryTime > priorTime) {
+      state.agreementRetryTimes.set(signature, retryTime);
+    }
+    if (duplicateRetry) {
+      state.diagnostics.duplicateAgreementRetries++;
+      return;
+    }
+    state.agreementRetryFrames.set(signature, frame);
+    appendMapped(state.agreementEvents, key, [
+      time,
+      frame,
+      type,
+      Boolean(badFcs),
+      senderIsOriginator,
+      dialogToken,
+      statusCode,
+      reasonCode,
+      startingSequence
+    ]);
+  }
+
+  function decode80211Packet(packet, record, state) {
+    let start = 0;
+    let radiotap = null;
+    if (record.linktype === LINKTYPE_IEEE802_11_RADIOTAP) {
+      radiotap = radiotapMetadata(packet);
+      if (!radiotap) {
+        state.diagnostics.malformedLinkHeaders++;
+        return;
+      }
+      start = radiotap.headerLength;
+      registerFrequency(state, radiotap.frequencyMHz);
+    }
+    if (start + 2 > packet.length) return;
+
+    let fcsBytes = record.fcsBytes == null ? 0 : record.fcsBytes;
+    if (radiotap && radiotap.hasFcs) fcsBytes = 4;
+    const fullPacketCaptured = record.capturedLength >= record.originalLength;
+    const fcsCaptured =
+      fcsBytes > 0 &&
+      fullPacketCaptured &&
+      packet.length - start >= fcsBytes;
+    let end = packet.length - (fcsCaptured ? fcsBytes : 0);
+    let badFcs = Boolean(record.badFcs || (radiotap && radiotap.badFcs));
+    if (badFcs) state.diagnostics.explicitBadFcsPackets++;
+
+    if (fcsCaptured && fcsBytes === 4 && end > start) {
+      const expected = u32le(packet, end);
+      const actual = ieee80211Crc32(packet, start, end);
+      if (actual !== expected) {
+        if (!badFcs) state.diagnostics.computedBadFcsPackets++;
+        badFcs = true;
+      }
+    }
+    if (end - start < 2) return;
+
+    const fc = u16le(packet, start);
+    if ((fc & 0x0003) !== 0) return; // Only 802.11 protocol version 0.
+    const frameType = (fc >>> 2) & 0x03;
+    const subtype = (fc >>> 4) & 0x0f;
+    if (frameType === 1 && (subtype === 8 || subtype === 9)) {
+      parseBlockAckFrame(
+        packet, start, end, fc, subtype, record.frame, record.time, badFcs, state
+      );
+    } else if (frameType === 2) {
+      parseQosMpdu(
+        packet, start, end, fc, subtype, record.frame, record.time, state
+      );
+    } else if (frameType === 0) {
+      parseAgreementAction(
+        packet, start, end, fc, subtype, record.frame, record.time, badFcs, state
+      );
+    }
+  }
+
+  function processPacket(bytes, record, state) {
+    state.packetCount++;
+    record.frame = state.packetCount;
+    state.packetTimes.push(record.time);
+    if (record.time == null) state.diagnostics.untimestampedPackets++;
+
+    if (!SUPPORTED_LINKTYPES.has(record.linktype)) {
+      state.diagnostics.skippedUnsupportedLinktypePackets++;
+      if (!state.unsupportedLinktypeSet.has(record.linktype)) {
+        state.unsupportedLinktypeSet.add(record.linktype);
+        state.diagnostics.unsupportedLinktypes.push(record.linktype);
+        warn(
+          state,
+          `LINKTYPE ${record.linktype} is not supported; packets on that interface were skipped`
+        );
+      }
+      return;
+    }
+    const packet = bytes.subarray(record.dataOffset, record.dataOffset + record.capturedLength);
+    decode80211Packet(packet, record, state);
+  }
+
+  function readOptions(view, start, end, littleEndian) {
+    const options = [];
+    let offset = start;
+    while (offset + 4 <= end) {
+      const code = view.getUint16(offset, littleEndian);
+      const length = view.getUint16(offset + 2, littleEndian);
+      offset += 4;
+      if (code === OPT_END) break;
+      if (offset + length > end) {
+        throw new CaptureParseError('PCAPNG option exceeds its block', offset - 4);
+      }
+      options.push({ code, offset, length });
+      offset += align4(length);
+    }
+    return options;
+  }
+
+  function signed64(view, offset, littleEndian) {
+    if (typeof view.getBigInt64 === 'function') {
+      return view.getBigInt64(offset, littleEndian);
+    }
+    let high;
+    let low;
+    if (littleEndian) {
+      low = BigInt(view.getUint32(offset, true));
+      high = BigInt(view.getInt32(offset + 4, true));
+    } else {
+      high = BigInt(view.getInt32(offset, false));
+      low = BigInt(view.getUint32(offset + 4, false));
+    }
+    return (high << 32n) | low;
+  }
+
+  function timestampToSeconds(high, low, resolution, offsetSeconds) {
+    const ticks = (BigInt(high) << 32n) | BigInt(low);
+    let units;
+    if (resolution.binary) {
+      units = 1n << BigInt(resolution.exponent);
+    } else {
+      units = 10n ** BigInt(resolution.exponent);
+    }
+    const whole = ticks / units;
+    const fraction = ticks % units;
+    return (
+      Number(whole) +
+      Number(fraction) / Number(units) +
+      Number(offsetSeconds)
+    );
+  }
+
+  function interfaceFromIdb(bytes, view, offset, length, littleEndian, state) {
+    if (length < 20) throw new CaptureParseError('PCAPNG IDB is too short', offset);
+    const linktype = view.getUint16(offset + 8, littleEndian);
+    const snaplen = view.getUint32(offset + 12, littleEndian);
+    const iface = {
+      linktype,
+      snaplen,
+      resolution: { binary: false, exponent: 6 },
+      timestampOffset: 0n,
+      fcsBytes: null
+    };
+    const optionEnd = offset + length - 4;
+    for (const option of readOptions(view, offset + 16, optionEnd, littleEndian)) {
+      if (option.code === OPT_IDB_TSRESOL && option.length === 1) {
+        const value = bytes[option.offset];
+        iface.resolution =
+          (value & 0x80) !== 0
+            ? { binary: true, exponent: value & 0x7f }
+            : { binary: false, exponent: value };
+      } else if (option.code === OPT_IDB_FCSLEN && option.length === 1) {
+        const bits = bytes[option.offset];
+        if (bits % 8 === 0) iface.fcsBytes = bits / 8;
+        else warn(state, `An interface declares a non-octet FCS length (${bits} bits)`);
+      } else if (option.code === OPT_IDB_TSOFFSET && option.length === 8) {
+        iface.timestampOffset = signed64(view, option.offset, littleEndian);
+      }
+    }
+    // JavaScript Numbers and the simulator are useful to nanosecond scale.
+    // Binary resolutions do not have a finite decimal expansion, so preserve
+    // nine fractional digits rather than rounding them to a coarse tick count.
+    const precisionDigits = iface.resolution.binary
+      ? 9
+      : iface.resolution.exponent;
+    state.outputTimeDigits = Math.max(
+      state.outputTimeDigits,
+      Math.min(9, precisionDigits)
+    );
+    state.diagnostics.interfaces.push({
+      linktype,
+      snaplen,
+      timestampResolution:
+        `${iface.resolution.binary ? '2' : '10'}^-${iface.resolution.exponent}`,
+      fcsBytes: iface.fcsBytes
+    });
+    return iface;
+  }
+
+  function packetFlagsFromOptions(view, start, end, littleEndian) {
+    let flags = 0;
+    for (const option of readOptions(view, start, end, littleEndian)) {
+      if (option.code === OPT_EPB_FLAGS && option.length === 4) {
+        flags = view.getUint32(option.offset, littleEndian);
+        break;
+      }
+    }
+    return {
+      badFcs: (flags & EPB_FLAG_CRC_ERROR) !== 0,
+      fcsBytes: (flags & 0x000001e0) >>> 5
+    };
+  }
+
+  async function progressCheckpoint(state, bytesRead) {
+    const options = state.options;
+    const interval = Math.max(1, options.yieldEveryPackets || 4096);
+    if (state.packetCount % interval !== 0) return;
+    checkAbort(options.signal);
+    if (typeof options.onProgress === 'function') {
+      options.onProgress({
+        bytesRead,
+        totalBytes: state.byteLength,
+        packets: state.packetCount
+      });
+    }
+    if (options.yieldToUi !== false) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  async function parsePcapng(bytes, state) {
+    state.format = 'pcapng';
+    state.diagnostics.format = 'pcapng';
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let offset = 0;
+    let littleEndian = true;
+    let haveSection = false;
+    let interfaces = [];
+
+    while (offset < bytes.length) {
+      checkAbort(state.options.signal);
+      if (offset + 12 > bytes.length) {
+        throw new CaptureParseError('Truncated PCAPNG block header', offset);
+      }
+      const rawType = view.getUint32(offset, true);
+      if (rawType === PCAPNG_SHB) {
+        if (offset + 28 > bytes.length) {
+          throw new CaptureParseError('Truncated PCAPNG section header', offset);
+        }
+        const bomBytes = bytes.subarray(offset + 8, offset + 12);
+        if (
+          bomBytes[0] === 0x4d && bomBytes[1] === 0x3c &&
+          bomBytes[2] === 0x2b && bomBytes[3] === 0x1a
+        ) {
+          littleEndian = true;
+        } else if (
+          bomBytes[0] === 0x1a && bomBytes[1] === 0x2b &&
+          bomBytes[2] === 0x3c && bomBytes[3] === 0x4d
+        ) {
+          littleEndian = false;
+        } else {
+          throw new CaptureParseError('Invalid PCAPNG byte-order magic', offset + 8);
+        }
+        const length = view.getUint32(offset + 4, littleEndian);
+        if (length < 28 || (length & 3) !== 0 || offset + length > bytes.length) {
+          throw new CaptureParseError('Invalid PCAPNG section length', offset + 4);
+        }
+        if (view.getUint32(offset + length - 4, littleEndian) !== length) {
+          throw new CaptureParseError('PCAPNG section length trailer does not match', offset);
+        }
+        interfaces = [];
+        haveSection = true;
+        offset += length;
+        continue;
+      }
+      if (!haveSection) {
+        throw new CaptureParseError('PCAPNG data appears before a section header', offset);
+      }
+
+      const type = view.getUint32(offset, littleEndian);
+      const length = view.getUint32(offset + 4, littleEndian);
+      if (length < 12 || (length & 3) !== 0 || offset + length > bytes.length) {
+        throw new CaptureParseError('Invalid PCAPNG block length', offset + 4);
+      }
+      if (view.getUint32(offset + length - 4, littleEndian) !== length) {
+        throw new CaptureParseError('PCAPNG block length trailer does not match', offset);
+      }
+      const contentEnd = offset + length - 4;
+
+      if (type === PCAPNG_IDB) {
+        interfaces.push(
+          interfaceFromIdb(bytes, view, offset, length, littleEndian, state)
+        );
+      } else if (type === PCAPNG_EPB || type === PCAPNG_PB) {
+        const fixedLength = 28;
+        if (length < fixedLength + 4) {
+          throw new CaptureParseError('PCAPNG packet block is too short', offset);
+        }
+        const interfaceId =
+          type === PCAPNG_EPB
+            ? view.getUint32(offset + 8, littleEndian)
+            : view.getUint16(offset + 8, littleEndian);
+        const iface = interfaces[interfaceId];
+        const timestampHigh = view.getUint32(offset + 12, littleEndian);
+        const timestampLow = view.getUint32(offset + 16, littleEndian);
+        const capturedLength = view.getUint32(offset + 20, littleEndian);
+        const originalLength = view.getUint32(offset + 24, littleEndian);
+        const dataOffset = offset + fixedLength;
+        const optionsOffset = dataOffset + align4(capturedLength);
+        if (optionsOffset > contentEnd) {
+          throw new CaptureParseError('PCAPNG captured packet exceeds its block', offset);
+        }
+        let packetFlags = { badFcs: false, fcsBytes: 0 };
+        if (optionsOffset < contentEnd) {
+          packetFlags = packetFlagsFromOptions(
+            view, optionsOffset, contentEnd, littleEndian
+          );
+        }
+        if (!iface) {
+          warn(state, `Packet references missing PCAPNG interface ${interfaceId}`);
+          state.packetCount++;
+          state.packetTimes.push(null);
+          state.diagnostics.untimestampedPackets++;
+        } else {
+          processPacket(bytes, {
+            dataOffset,
+            capturedLength,
+            originalLength,
+            linktype: iface.linktype,
+            fcsBytes: packetFlags.fcsBytes || iface.fcsBytes,
+            badFcs: packetFlags.badFcs,
+            time: timestampToSeconds(
+              timestampHigh,
+              timestampLow,
+              iface.resolution,
+              iface.timestampOffset
+            )
+          }, state);
+        }
+        await progressCheckpoint(state, offset + length);
+      } else if (type === PCAPNG_SPB) {
+        if (length < 16) throw new CaptureParseError('PCAPNG SPB is too short', offset);
+        const iface = interfaces[0];
+        const originalLength = view.getUint32(offset + 8, littleEndian);
+        const available = length - 16;
+        const capturedLength = Math.min(
+          originalLength,
+          iface && iface.snaplen ? iface.snaplen : originalLength,
+          available
+        );
+        if (!iface) {
+          warn(state, 'A Simple Packet Block has no interface 0');
+          state.packetCount++;
+          state.packetTimes.push(null);
+          state.diagnostics.untimestampedPackets++;
+        } else {
+          processPacket(bytes, {
+            dataOffset: offset + 12,
+            capturedLength,
+            originalLength,
+            linktype: iface.linktype,
+            fcsBytes: iface.fcsBytes,
+            badFcs: false,
+            time: null
+          }, state);
+        }
+        await progressCheckpoint(state, offset + length);
+      }
+      offset += length;
+    }
+  }
+
+  function detectPcapMagic(bytes) {
+    if (bytes.length < 4) return null;
+    const key = `${HEX[bytes[0]]}${HEX[bytes[1]]}${HEX[bytes[2]]}${HEX[bytes[3]]}`;
+    switch (key) {
+      case 'd4c3b2a1': return { littleEndian: true, nanoseconds: false };
+      case 'a1b2c3d4': return { littleEndian: false, nanoseconds: false };
+      case '4d3cb2a1': return { littleEndian: true, nanoseconds: true };
+      case 'a1b23c4d': return { littleEndian: false, nanoseconds: true };
+      default: return null;
+    }
+  }
+
+  async function parseClassicPcap(bytes, magic, state) {
+    state.format = magic.nanoseconds ? 'pcap-nanosecond' : 'pcap';
+    state.diagnostics.format = state.format;
+    state.outputTimeDigits = magic.nanoseconds ? 9 : 6;
+    if (bytes.length < 24) throw new CaptureParseError('Truncated PCAP global header', 0);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const littleEndian = magic.littleEndian;
+    const major = view.getUint16(4, littleEndian);
+    const minor = view.getUint16(6, littleEndian);
+    if (major !== 2 || minor !== 4) {
+      warn(state, `Unusual PCAP version ${major}.${minor}; attempting standard parsing`);
+    }
+    const snaplen = view.getUint32(16, littleEndian);
+    const linktypeWord = view.getUint32(20, littleEndian);
+    const linktype = linktypeWord & 0x0000ffff;
+    const fcsLengthPresent = (linktypeWord & 0x04000000) !== 0;
+    // In classic PCAP the four-bit FCS field is in 16-bit units.
+    const fcsBytes = fcsLengthPresent ? ((linktypeWord >>> 28) & 0x0f) * 2 : null;
+    state.diagnostics.interfaces.push({
+      linktype,
+      snaplen,
+      timestampResolution: magic.nanoseconds ? '10^-9' : '10^-6',
+      fcsBytes
+    });
+
+    let offset = 24;
+    while (offset < bytes.length) {
+      checkAbort(state.options.signal);
+      if (offset + 16 > bytes.length) {
+        throw new CaptureParseError('Truncated PCAP packet header', offset);
+      }
+      const seconds = view.getUint32(offset, littleEndian);
+      const fraction = view.getUint32(offset + 4, littleEndian);
+      const capturedLength = view.getUint32(offset + 8, littleEndian);
+      const originalLength = view.getUint32(offset + 12, littleEndian);
+      const dataOffset = offset + 16;
+      if (capturedLength > bytes.length - dataOffset) {
+        throw new CaptureParseError('PCAP captured packet exceeds the file', offset);
+      }
+      if (snaplen && capturedLength > snaplen) {
+        warn(state, `A PCAP packet exceeds the declared snaplen (${snaplen} bytes)`);
+      }
+      processPacket(bytes, {
+        dataOffset,
+        capturedLength,
+        originalLength,
+        linktype,
+        fcsBytes,
+        badFcs: false,
+        time: seconds + fraction * (magic.nanoseconds ? 1e-9 : 1e-6)
+      }, state);
+      offset = dataOffset + capturedLength;
+      await progressCheckpoint(state, offset);
+    }
+  }
+
+  function fillMissingPacketTimes(state) {
+    const times = state.packetTimes;
+    if (times.length === 0) return { first: null, last: null };
+    const known = [];
+    for (let index = 0; index < times.length; index++) {
+      if (Number.isFinite(times[index])) known.push(index);
+    }
+    if (known.length === 0) {
+      for (let index = 0; index < times.length; index++) times[index] = index * 0.000001;
+      warn(
+        state,
+        'No packet timestamps were available; frame-order timestamps at 1 us intervals were synthesized'
+      );
+      return { first: null, last: null };
+    }
+    const firstKnown = known[0];
+    for (let index = firstKnown - 1; index >= 0; index--) {
+      times[index] = times[firstKnown] - (firstKnown - index) * 0.000001;
+    }
+    for (let knownIndex = 0; knownIndex + 1 < known.length; knownIndex++) {
+      const left = known[knownIndex];
+      const right = known[knownIndex + 1];
+      const gap = right - left;
+      for (let index = left + 1; index < right; index++) {
+        const ratio = (index - left) / gap;
+        times[index] = times[left] + (times[right] - times[left]) * ratio;
+      }
+    }
+    const lastKnown = known[known.length - 1];
+    for (let index = lastKnown + 1; index < times.length; index++) {
+      times[index] = times[lastKnown] + (index - lastKnown) * 0.000001;
+    }
+    if (known.length !== times.length) {
+      warn(
+        state,
+        `${times.length - known.length} packet(s) lacked timestamps; their times were interpolated from capture order`
+      );
+    }
+    return {
+      first: times[0],
+      last: times[times.length - 1]
+    };
+  }
+
+  function normalizeItemTimes(items, packetTimes, base, digits) {
+    for (const item of items) {
+      const absolute = packetTimes[item[1] - 1];
+      item[0] = roundedTime(absolute - base, digits);
+    }
+  }
+
+  function frequencySummary(state) {
+    let best = state.firstFrequency;
+    let bestCount = -1;
+    for (const [frequency, count] of state.frequencyCounts) {
+      if (count > bestCount) {
+        best = frequency;
+        bestCount = count;
+      }
+    }
+    return best;
+  }
+
+  function frequencyToChannel(frequency) {
+    if (!Number.isInteger(frequency)) return null;
+    if (frequency === 2484) return 14;
+    if (frequency >= 2412 && frequency <= 2472) return (frequency - 2407) / 5;
+    if (frequency === 5935) return 2;
+    if (frequency >= 5955 && frequency <= 7115) return (frequency - 5950) / 5;
+    if (frequency >= 5000 && frequency <= 5900) return (frequency - 5000) / 5;
+    if (frequency >= 58320 && frequency <= 70200) return (frequency - 56160) / 2160;
+    return null;
+  }
+
+  function isoTimestamp(seconds, digits) {
+    if (!Number.isFinite(seconds)) return null;
+    digits = Math.max(0, Math.min(9, digits == null ? 3 : digits));
+    const scale = 10 ** digits;
+    let wholeSeconds = Math.floor(seconds);
+    let fraction = Math.round((seconds - wholeSeconds) * scale);
+    if (fraction >= scale) {
+      wholeSeconds++;
+      fraction = 0;
+    }
+    const date = new Date(wholeSeconds * 1000);
+    if (Number.isNaN(date.valueOf())) return null;
+    const prefix = date.toISOString().slice(0, 19);
+    return digits
+      ? `${prefix}.${String(fraction).padStart(digits, '0')}Z`
+      : `${prefix}Z`;
+  }
+
+  function finalizeModel(state, options) {
+    const boundary = fillMissingPacketTimes(state);
+    const base = state.packetTimes.length ? state.packetTimes[0] : 0;
+    state.sessions.sort((left, right) => left.key.localeCompare(right.key));
+    for (const session of state.sessions) {
+      session.mpdus = state.capturedMpdus.get(session.key) || [];
+      session.events = state.agreementEvents.get(session.key) || [];
+      normalizeItemTimes(
+        session.samples, state.packetTimes, base, state.outputTimeDigits
+      );
+      normalizeItemTimes(
+        session.mpdus, state.packetTimes, base, state.outputTimeDigits
+      );
+      normalizeItemTimes(
+        session.events, state.packetTimes, base, state.outputTimeDigits
+      );
+    }
+
+    const frequencyMHz = frequencySummary(state);
+    const durationSeconds =
+      state.packetTimes.length > 1
+        ? roundedTime(
+          state.packetTimes[state.packetTimes.length - 1] - base,
+          state.outputTimeDigits
+        )
+        : 0;
+    const filename = options.filename || 'capture.pcapng';
+    return {
+      meta: {
+        filename,
+        sourcePath: options.sourcePath || filename,
+        packetCount: state.packetCount,
+        sizeBytes: state.byteLength,
+        durationSeconds,
+        startTime: isoTimestamp(boundary.first, state.outputTimeDigits),
+        endTime: isoTimestamp(boundary.last, state.outputTimeDigits),
+        frequencyMHz,
+        channel: frequencyToChannel(frequencyMHz),
+        sha256: null
+      },
+      totals: state.totals,
+      sessions: state.sessions,
+      diagnostics: state.diagnostics
+    };
+  }
+
+  async function digestSha256(bytes) {
+    const cryptoObject = root.crypto;
+    if (!cryptoObject || !cryptoObject.subtle) return null;
+    const digest = await cryptoObject.subtle.digest('SHA-256', bytes);
+    return bytesToHex(new Uint8Array(digest), 0, 32);
+  }
+
+  function asUint8Array(input) {
+    if (input instanceof Uint8Array) return input;
+    if (input instanceof ArrayBuffer) return new Uint8Array(input);
+    if (ArrayBuffer.isView(input)) {
+      return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    }
+    return null;
+  }
+
+  async function parse(input, options) {
+    options = options || {};
+    let bytes = asUint8Array(input);
+    if (!bytes && input && typeof input.arrayBuffer === 'function') {
+      if (!options.filename && typeof input.name === 'string') {
+        options = Object.assign({}, options, { filename: input.name });
+      }
+      bytes = new Uint8Array(await input.arrayBuffer());
+    }
+    if (!bytes) throw new TypeError('Expected a File, Blob, ArrayBuffer, or Uint8Array');
+    checkAbort(options.signal);
+
+    const state = makeState(bytes.byteLength, options);
+    const pcapMagic = detectPcapMagic(bytes);
+    if (pcapMagic) {
+      await parseClassicPcap(bytes, pcapMagic, state);
+    } else if (bytes.length >= 4 && u32le(bytes, 0) === PCAPNG_SHB) {
+      await parsePcapng(bytes, state);
+    } else {
+      throw new CaptureParseError('Input is neither classic PCAP nor PCAPNG', 0);
+    }
+    const result = finalizeModel(state, options);
+    if (options.computeSha256 !== false) {
+      result.meta.sha256 = await digestSha256(bytes);
+      if (!result.meta.sha256) {
+        warn(state, 'SHA-256 was not calculated because Web Crypto is unavailable');
+      }
+    }
+    if (typeof options.onProgress === 'function') {
+      options.onProgress({
+        bytesRead: bytes.byteLength,
+        totalBytes: bytes.byteLength,
+        packets: state.packetCount,
+        done: true
+      });
+    }
+    return result;
+  }
+
+  const api = Object.freeze({
+    parse,
+    CaptureParseError,
+    LINKTYPE_IEEE802_11,
+    LINKTYPE_IEEE802_11_RADIOTAP
+  });
+  root.WlanBaCaptureParser = api;
+  if (typeof module === 'object' && module.exports) module.exports = api;
+})(typeof globalThis === 'object' ? globalThis : this);
+</script>
+  <script>
+  (() => {
+    'use strict';
+
+    let capture = null;
+    const fileInput = document.getElementById('capture-file');
+    const cancelLoad = document.getElementById('cancel-load');
+    const loadStatus = document.getElementById('load-status');
+    const plotState = document.getElementById('plot-state');
+    const stateTitle = document.getElementById('state-title');
+    const stateMessage = document.getElementById('state-message');
+    const loadProgress = document.getElementById('load-progress');
+    const loadError = document.getElementById('load-error');
+    const captureMeta = document.getElementById('capture-meta');
+    const pairSelect = document.getElementById('pair-select');
+    const tidSelect = document.getElementById('tid-select');
+    const plot = document.getElementById('plot');
+    const plotFrame = document.getElementById('plot-frame');
+    const tooltip = document.getElementById('plot-tooltip');
+    const detail = document.getElementById('detail');
+    const status = document.getElementById('status');
+    const ctx = plot.getContext('2d');
+
+    const C = {
+      blue: '#3465a4',
+      blueDark: '#204a87',
+      orange: '#f57900',
+      retryOrange: '#ce5c00',
+      purple: '#5c3566',
+      purpleFill: '#75507b',
+      green: '#4e9a06',
+      red: '#ef2929',
+      darkRed: '#cc0000',
+      gold: '#fce94f',
+      goldEdge: '#725000',
+      graphite: '#555753',
+      grayFill: '#babdb6',
+      grid: '#e0e3e6',
+      axis: '#555b61',
+      ink: '#25292d',
+      muted: '#5e6670',
+      white: '#ffffff'
+    };
+
+    const eventLabels = {
+      request: 'ADDBA Req',
+      accepted: 'ADDBA OK',
+      rejected: 'ADDBA Reject',
+      delba: 'DELBA',
+      reset: 'SSN reset'
+    };
+
+    const outcomeLabels = {
+      acknowledged: 'acknowledged',
+      passed: 'passed by SSN',
+      interrupted: 'window interrupted',
+      agreementStart: 'agreement started',
+      agreementEnd: 'agreement ended',
+      epochReset: 'SSN epoch reset',
+      active: 'active at capture end'
+    };
+
+    let sessionByKey = new Map();
+    const derivedCache = new Map();
+    const layerIds = ['labels', 'deltas', 'gaps', 'mpdus', 'persistent', 'set', 'holes', 'agreements'];
+    const layers = Object.fromEntries(layerIds.map(name => [name, document.getElementById(`show-${name}`)]));
+    const mouseModeInputs = [...document.querySelectorAll('input[name="mouse-mode"]')];
+    const saveButton = document.getElementById('save');
+    const resetButton = document.getElementById('reset');
+    const parserSource = document.getElementById('parser-source').textContent;
+    let pairs = [];
+    let session = null;
+    let data = null;
+    let view = { x0: 0, x1: 1, y0: 0, y1: 1 };
+    let metrics = { width: 1, height: 1, dpr: 1, left: 72, right: 20, top: 18, bottom: 48, pw: 1, ph: 1 };
+    let mode = 'drag';
+    let pointer = null;
+    let visibleHits = [];
+    let hoverHit = null;
+    let renderScheduled = false;
+    let importWorker = null;
+    let importAbortController = null;
+    let loadGeneration = 0;
+
+    function formatFileSize(bytes) {
+      if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
+      if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+      return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+    }
+
+    function setGraphControls(enabled) {
+      pairSelect.disabled = !enabled;
+      tidSelect.disabled = !enabled;
+      mouseModeInputs.forEach(input => { input.disabled = !enabled; });
+      layerIds.forEach(name => { layers[name].disabled = !enabled; });
+      saveButton.disabled = !enabled;
+      resetButton.disabled = !enabled;
+      plot.tabIndex = enabled ? 0 : -1;
+      if (enabled) plot.removeAttribute('aria-disabled');
+      else plot.setAttribute('aria-disabled', 'true');
+    }
+
+    function clearCanvas() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, plot.width, plot.height);
+    }
+
+    function clearCapture() {
+      capture = null;
+      sessionByKey = new Map();
+      derivedCache.clear();
+      pairs = [];
+      session = null;
+      data = null;
+      pointer = null;
+      visibleHits = [];
+      hoverHit = null;
+      pairSelect.replaceChildren();
+      tidSelect.replaceChildren();
+      captureMeta.textContent = 'No capture loaded';
+      detail.textContent =
+        'Block Ack responses drive the acknowledgment analysis. Bitmap zeros mean “not acknowledged in this BA”; they do not prove transmission or packet loss.';
+      status.textContent = '';
+      hideTooltip();
+      clearCanvas();
+      setGraphControls(false);
+    }
+
+    function setViewerState(state, payload = {}) {
+      const busy = state === 'reading' || state === 'parsing';
+      plotFrame.setAttribute('aria-busy', String(busy));
+      cancelLoad.hidden = !busy;
+      loadError.hidden = true;
+      loadError.textContent = '';
+      loadProgress.hidden = true;
+      plotState.hidden = state === 'ready';
+      if (state !== 'ready') setGraphControls(false);
+
+      if (state === 'empty') {
+        stateTitle.textContent = 'No capture loaded';
+        stateMessage.textContent = 'Choose a local PCAPNG or PCAP file above.';
+        loadStatus.textContent =
+          'Choose a local PCAPNG or PCAP file. The capture stays on this device.';
+      } else if (state === 'reading') {
+        const largeFileNote = payload.size >= 512 * 1024 ** 2
+          ? ' · Large captures may exceed the browser’s available memory.'
+          : '';
+        stateTitle.textContent = 'Reading capture';
+        stateMessage.textContent =
+          `${payload.filename} · ${formatFileSize(payload.size)}${largeFileNote}`;
+        loadProgress.hidden = false;
+        loadProgress.removeAttribute('value');
+        loadStatus.textContent = `Reading ${payload.filename} locally…${largeFileNote}`;
+      } else if (state === 'parsing') {
+        const percent = Math.max(0, Math.min(100, payload.percent || 0));
+        stateTitle.textContent = 'Parsing WLAN Block Ack traffic';
+        stateMessage.textContent =
+          `${payload.filename} · ${percent}% · ${(payload.packets || 0).toLocaleString()} packets`;
+        loadProgress.hidden = false;
+        loadProgress.value = percent;
+        loadStatus.textContent =
+          `Parsing ${payload.filename}: ${percent}% · ${(payload.packets || 0).toLocaleString()} packets`;
+      } else if (state === 'no-data') {
+        stateTitle.textContent = 'No supported Block Ack sessions';
+        stateMessage.textContent = payload.message ||
+          'The capture is valid, but it contains no supported WLAN BA or BAR session.';
+        loadStatus.textContent = payload.status || 'Capture parsed with no supported BA sessions.';
+      } else if (state === 'error') {
+        stateTitle.textContent = 'Capture could not be opened';
+        stateMessage.textContent = 'Choose another PCAPNG or PCAP file.';
+        loadError.hidden = false;
+        loadError.textContent = payload.message || 'Unknown capture parsing error.';
+        loadStatus.textContent = `Import failed: ${loadError.textContent}`;
+      } else if (state === 'ready') {
+        plotState.hidden = true;
+        setGraphControls(true);
+        loadStatus.textContent = payload.status || 'Capture loaded locally.';
+      }
+    }
+
+    function captureFormat(model) {
+      const format = model && model.diagnostics && model.diagnostics.format;
+      if (format === 'pcapng') return 'PCAPNG';
+      if (format === 'pcap-nanosecond') return 'PCAP (nanosecond)';
+      return 'PCAP';
+    }
+
+    function captureSummary(model) {
+      const meta = model.meta;
+      const parts = [
+        meta.filename,
+        captureFormat(model),
+        `${meta.packetCount.toLocaleString()} packets`,
+        `${model.sessions.length} BA sessions`,
+        `${model.totals.ba.toLocaleString()} BA / ${model.totals.bar.toLocaleString()} BAR`
+      ];
+      if (meta.channel != null && meta.frequencyMHz != null) {
+        parts.push(`channel ${meta.channel} / ${meta.frequencyMHz} MHz`);
+      }
+      return parts.join(' · ');
+    }
+
+    function diagnosticNote(model) {
+      const diagnostics = model.diagnostics || {};
+      const warnings = diagnostics.warnings || [];
+      return warnings.length
+        ? ` · Warning: ${warnings[0]}${warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''}`
+        : '';
+    }
+
+    function installCapture(model) {
+      capture = model;
+      sessionByKey = new Map(capture.sessions.map(item => [item.key, item]));
+      derivedCache.clear();
+      pairs = [];
+      pairSelect.replaceChildren();
+      tidSelect.replaceChildren();
+      captureMeta.textContent = captureSummary(capture);
+
+      if (!capture.sessions.length) {
+        const totalBaBar = capture.totals.ba + capture.totals.bar;
+        const unsupported = capture.totals.unsupportedBa + capture.totals.unsupportedBar;
+        const malformed = capture.totals.malformedBa + capture.totals.malformedBar;
+        const details = totalBaBar
+          ? `${totalBaBar.toLocaleString()} BA/BAR frame(s) were seen; ${unsupported.toLocaleString()} were unsupported and ${malformed.toLocaleString()} were malformed.`
+          : 'No WLAN Block Ack or Block Ack Request frames were found.';
+        setViewerState('no-data', {
+          message: `${details} Supported inputs use raw IEEE 802.11 or radiotap link types.`,
+          status: `${captureSummary(capture)}${diagnosticNote(capture)}`
+        });
+        return;
+      }
+
+      setViewerState('ready', {
+        status: `Loaded locally · ${captureSummary(capture)}${diagnosticNote(capture)}`
+      });
+      initializeSelectors();
+    }
+
+    function createParserWorker() {
+      const bootstrap = `${parserSource}
+self.onmessage = async event => {
+  try {
+    const capture = await self.WlanBaCaptureParser.parse(event.data.buffer, {
+      filename: event.data.file.name,
+      sourcePath: event.data.file.name,
+      computeSha256: false,
+      yieldToUi: false,
+      yieldEveryPackets: 4096,
+      onProgress(progress) {
+        self.postMessage({ type: 'progress', progress });
+      }
+    });
+    self.postMessage({ type: 'result', capture });
+  } catch (error) {
+    self.postMessage({
+      type: 'error',
+      message: error && error.message ? error.message : String(error)
+    });
+  }
+};`;
+      const url = URL.createObjectURL(new Blob([bootstrap], { type: 'text/javascript' }));
+      try {
+        const worker = new Worker(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return worker;
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        throw error;
+      }
+    }
+
+    async function parseOnMainThread(buffer, file, generation) {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      importAbortController = controller;
+      let lastProgressPercent = -5;
+      let lastProgressUpdate = 0;
+      loadStatus.textContent =
+        'Background workers are unavailable; parsing cooperatively in this page…';
+      try {
+        const model = await globalThis.WlanBaCaptureParser.parse(buffer, {
+          filename: file.name,
+          sourcePath: file.name,
+          computeSha256: false,
+          yieldToUi: true,
+          yieldEveryPackets: 2048,
+          signal: controller ? controller.signal : undefined,
+          onProgress(progress) {
+            if (generation !== loadGeneration) return;
+            const percent = progress.totalBytes
+              ? Math.floor(progress.bytesRead / progress.totalBytes * 100)
+              : 0;
+            const now = Date.now();
+            if (percent < 100 &&
+                percent - lastProgressPercent < 5 &&
+                now - lastProgressUpdate < 100) {
+              return;
+            }
+            lastProgressPercent = percent;
+            lastProgressUpdate = now;
+            setViewerState('parsing', {
+              filename: file.name,
+              percent,
+              packets: progress.packets
+            });
+          }
+        });
+        if (generation !== loadGeneration) return;
+        importAbortController = null;
+        installCapture(model);
+      } catch (error) {
+        if (generation !== loadGeneration || error && error.name === 'AbortError') return;
+        importAbortController = null;
+        setViewerState('error', {
+          message: error && error.message ? error.message : String(error)
+        });
+      }
+    }
+
+    function cancelImport(showCancelled = true) {
+      loadGeneration++;
+      if (importAbortController) {
+        importAbortController.abort();
+        importAbortController = null;
+      }
+      if (importWorker) {
+        importWorker.terminate();
+        importWorker = null;
+      }
+      fileInput.value = '';
+      clearCapture();
+      setViewerState('empty');
+      if (showCancelled) loadStatus.textContent = 'Capture import cancelled.';
+    }
+
+    async function loadCaptureFile(file) {
+      const generation = ++loadGeneration;
+      if (importAbortController) {
+        importAbortController.abort();
+        importAbortController = null;
+      }
+      if (importWorker) {
+        importWorker.terminate();
+        importWorker = null;
+      }
+      clearCapture();
+      setViewerState('reading', { filename: file.name, size: file.size });
+
+      let buffer;
+      try {
+        buffer = await file.arrayBuffer();
+      } catch (error) {
+        if (generation !== loadGeneration) return;
+        setViewerState('error', {
+          message: `Could not read ${file.name}: ${error && error.message ? error.message : String(error)}`
+        });
+        return;
+      }
+      if (generation !== loadGeneration) return;
+
+      setViewerState('parsing', { filename: file.name, percent: 0, packets: 0 });
+      let worker;
+      try {
+        worker = createParserWorker();
+      } catch (error) {
+        await parseOnMainThread(buffer, file, generation);
+        return;
+      }
+      importWorker = worker;
+      let lastProgressPercent = -5;
+      let lastProgressUpdate = 0;
+
+      worker.onmessage = event => {
+        if (generation !== loadGeneration || worker !== importWorker) return;
+        const message = event.data || {};
+        if (message.type === 'progress') {
+          const progress = message.progress || {};
+          const percent = progress.totalBytes
+            ? Math.floor(progress.bytesRead / progress.totalBytes * 100)
+            : 0;
+          const now = Date.now();
+          if (percent < 100 &&
+              percent - lastProgressPercent < 5 &&
+              now - lastProgressUpdate < 100) {
+            return;
+          }
+          lastProgressPercent = percent;
+          lastProgressUpdate = now;
+          setViewerState('parsing', {
+            filename: file.name,
+            percent,
+            packets: progress.packets
+          });
+        } else if (message.type === 'result') {
+          worker.terminate();
+          importWorker = null;
+          installCapture(message.capture);
+        } else if (message.type === 'error') {
+          worker.terminate();
+          importWorker = null;
+          setViewerState('error', { message: message.message });
+        }
+      };
+      worker.onerror = event => {
+        if (generation !== loadGeneration || worker !== importWorker) return;
+        worker.terminate();
+        importWorker = null;
+        setViewerState('error', {
+          message: event.message || 'The local capture parser stopped unexpectedly.'
+        });
+      };
+      worker.postMessage({
+        buffer,
+        file: { name: file.name, size: file.size, lastModified: file.lastModified }
+      }, [buffer]);
+    }
+
+    function splitKey(key) {
+      const parts = key.split('|');
+      return { ta: parts[0], ra: parts[1], tid: Number(parts[2]) };
+    }
+
+    function buildPairs() {
+      const grouped = new Map();
+      if (!capture) {
+        pairs = [];
+        return;
+      }
+      for (const item of capture.sessions) {
+        const pairKey = `${item.ta}|${item.ra}`;
+        if (!grouped.has(pairKey)) grouped.set(pairKey, { key: pairKey, ta: item.ta, ra: item.ra, baCount: 0, sessions: [] });
+        const pair = grouped.get(pairKey);
+        pair.baCount += item.baCount;
+        pair.sessions.push(item);
+      }
+      pairs = [...grouped.values()];
+      pairs.forEach(pair => pair.sessions.sort((a, b) => b.baCount - a.baCount || a.tid - b.tid));
+      pairs.sort((a, b) => b.baCount - a.baCount || a.ta.localeCompare(b.ta) || a.ra.localeCompare(b.ra));
+    }
+
+    function parseNumber(value) {
+      if (typeof value === 'number') return value;
+      if (value == null || value === '') return null;
+      return Number(value);
+    }
+
+    function bytesFromHex(hex) {
+      const result = [];
+      for (let offset = 0; offset + 1 < hex.length; offset += 2) {
+        result.push(Number.parseInt(hex.slice(offset, offset + 2), 16));
+      }
+      return result;
+    }
+
+    function bitmapPositionCount(type, bytes) {
+      return type === 0 ? bytes.length / 2 : bytes.length * 8;
+    }
+
+    function bitmapPositionSet(type, bytes, position) {
+      if (type === 0) {
+        const offset = position * 2;
+        return offset + 1 < bytes.length && (bytes[offset] !== 0 || bytes[offset + 1] !== 0);
+      }
+      const offset = Math.floor(position / 8);
+      return offset < bytes.length && Boolean(bytes[offset] & (1 << (position % 8)));
+    }
+
+    function bitCount(bytes) {
+      let count = 0;
+      for (let value of bytes) {
+        while (value) {
+          count += value & 1;
+          value >>>= 1;
+        }
+      }
+      return count;
+    }
+
+    function unwrapSequence(sequence, previousSequence, previousUnwrapped) {
+      let delta = (sequence - previousSequence + 2048) & 4095;
+      delta -= 2048;
+      return previousUnwrapped + delta;
+    }
+
+    function wrapSequence(sequence) {
+      const rounded = Math.round(sequence) % 4096;
+      return rounded < 0 ? rounded + 4096 : rounded;
+    }
+
+    function deriveSession(raw) {
+      if (derivedCache.has(raw.key)) return derivedCache.get(raw.key);
+
+      const result = {
+        ba: [],
+        bar: [],
+        mpdu: [],
+        set: [],
+        prior: [],
+        holes: [],
+        gaps: [],
+        spans: [],
+        events: raw.events.map(item => ({
+          t: item[0], frame: item[1], type: item[2], bad: Boolean(item[3]),
+          senderOriginator: Boolean(item[4]), token: item[5], status: item[6],
+          reason: item[7], ssn: item[8]
+        }))
+      };
+      result.events.sort((a, b) => a.t - b.t || a.frame - b.frame);
+
+      const activeHoles = new Map();
+      const acknowledged = new Set();
+      const previouslySet = new Set();
+      let greatestSsn = 0;
+      let haveGreatestSsn = false;
+      let ackFrontier = 0;
+      let haveAckFrontier = false;
+      let previousBaSequence = 0;
+      let previousBaUnwrapped = 0;
+      let havePreviousBa = false;
+      let eventIndex = 0;
+
+      function finishHole(sequence, track, outcome, endpointT, terminalFrame) {
+        if (track.count < 2) return;
+        result.spans.push({
+          sequence,
+          firstT: track.firstT,
+          endT: endpointT,
+          firstFrame: track.firstFrame,
+          terminalFrame,
+          count: track.count,
+          outcome
+        });
+      }
+
+      function resetAnalysis(outcome, terminalFrame) {
+        for (const [sequence, track] of activeHoles) {
+          finishHole(sequence, track, outcome, track.lastT, terminalFrame);
+        }
+        activeHoles.clear();
+        acknowledged.clear();
+        previouslySet.clear();
+        haveGreatestSsn = false;
+        ackFrontier = 0;
+        haveAckFrontier = false;
+      }
+
+      for (const sample of raw.samples) {
+        const [t, frame, kind, type, ssn, bitmapHex, bad] = sample;
+        while (eventIndex < result.events.length) {
+          const event = result.events[eventIndex];
+          if (event.t > t || (event.t === t && event.frame >= frame)) break;
+          if (event.type === 'accepted') {
+            resetAnalysis('agreementStart', event.frame);
+            havePreviousBa = false;
+          } else if (event.type === 'delba') {
+            resetAnalysis('agreementEnd', event.frame);
+            havePreviousBa = false;
+          }
+          eventIndex++;
+        }
+
+        let unwrapped = ssn;
+        if (havePreviousBa) unwrapped = unwrapSequence(ssn, previousBaSequence, previousBaUnwrapped);
+
+        if (kind === 1) {
+          result.bar.push({ t, frame, type, ssn, u: unwrapped, bad: Boolean(bad) });
+          continue;
+        }
+
+        const bytes = bytesFromHex(bitmapHex);
+        const positions = bitmapPositionCount(type, bytes);
+        const movedBackward = havePreviousBa && unwrapped < previousBaUnwrapped;
+        const epochReset = haveAckFrontier && movedBackward && unwrapped + positions <= ackFrontier;
+        if (epochReset) {
+          resetAnalysis('epochReset', frame);
+          result.events.push({ t, frame, type: 'reset', bad: Boolean(bad), senderOriginator: false, token: null, status: null, reason: null, ssn: null });
+        }
+
+        previousBaSequence = ssn;
+        previousBaUnwrapped = unwrapped;
+        havePreviousBa = true;
+
+        const ba = {
+          t, frame, type, ssn, u: unwrapped, upper: unwrapped + positions,
+          bitmapHex, bytes, positions, bad: Boolean(bad), setBits: bitCount(bytes)
+        };
+        result.ba.push(ba);
+
+        if (haveAckFrontier && unwrapped > ackFrontier) {
+          for (let sequence = ackFrontier; sequence < unwrapped; sequence++) {
+            result.gaps.push({ t, frame, sequence });
+          }
+        }
+
+        let highestSet = -1;
+        for (let position = positions - 1; position >= 0; position--) {
+          if (bitmapPositionSet(type, bytes, position)) {
+            highestSet = position;
+            break;
+          }
+        }
+
+        if (!haveGreatestSsn || unwrapped > greatestSsn) {
+          greatestSsn = unwrapped;
+          haveGreatestSsn = true;
+          for (const sequence of [...acknowledged]) {
+            if (sequence < greatestSsn) acknowledged.delete(sequence);
+          }
+        }
+
+        for (const [sequence, originalTrack] of [...activeHoles]) {
+          const track = { ...originalTrack };
+          if (sequence < unwrapped) {
+            finishHole(sequence, track, 'passed', t, frame);
+            activeHoles.delete(sequence);
+            continue;
+          }
+          if (sequence >= unwrapped + positions) {
+            finishHole(sequence, track, 'interrupted', track.lastT, frame);
+            activeHoles.delete(sequence);
+            continue;
+          }
+          const position = sequence - unwrapped;
+          if (bitmapPositionSet(type, bytes, position)) {
+            finishHole(sequence, track, 'acknowledged', t, frame);
+            acknowledged.add(sequence);
+            activeHoles.delete(sequence);
+            continue;
+          }
+          track.lastT = t;
+          track.lastFrame = frame;
+          track.count++;
+          activeHoles.set(sequence, track);
+        }
+
+        const sampleFrontier = highestSet >= 0 ? unwrapped + highestSet + 1 : unwrapped;
+        if (haveAckFrontier) ackFrontier = Math.max(ackFrontier, sampleFrontier);
+        else {
+          ackFrontier = sampleFrontier;
+          haveAckFrontier = true;
+        }
+
+        for (let position = 0; position <= highestSet; position++) {
+          const sequence = unwrapped + position;
+          const point = { t, frame, sequence, bad: Boolean(bad), ba };
+          if (bitmapPositionSet(type, bytes, position)) {
+            result.set.push(point);
+            previouslySet.add(sequence);
+            if (sequence >= greatestSsn) acknowledged.add(sequence);
+          } else if (previouslySet.has(sequence)) {
+            result.prior.push(point);
+          } else {
+            result.holes.push(point);
+            if (sequence >= greatestSsn && !acknowledged.has(sequence) && !activeHoles.has(sequence)) {
+              activeHoles.set(sequence, {
+                firstT: t,
+                firstFrame: frame,
+                lastT: t,
+                lastFrame: frame,
+                count: 1
+              });
+            }
+          }
+        }
+      }
+
+      while (eventIndex < result.events.length) {
+        const event = result.events[eventIndex++];
+        if (event.type === 'accepted') resetAnalysis('agreementStart', event.frame);
+        else if (event.type === 'delba') resetAnalysis('agreementEnd', event.frame);
+      }
+
+      for (const [sequence, track] of activeHoles) {
+        finishHole(sequence, track, 'active', track.lastT, track.lastFrame);
+      }
+
+      result.spans.sort((a, b) => a.endT - b.endT || a.sequence - b.sequence || a.firstT - b.firstT);
+      result.events.sort((a, b) => a.t - b.t || a.frame - b.frame || a.type.localeCompare(b.type));
+
+      let latestAnchor = -1;
+      for (const item of raw.mpdus) {
+        const [t, frame, sequence, retry = false] = item;
+        let unwrapped = sequence;
+        if (result.ba.length) {
+          while (latestAnchor + 1 < result.ba.length) {
+            const next = result.ba[latestAnchor + 1];
+            if (next.t > t || (next.t === t && next.frame > frame)) break;
+            latestAnchor++;
+          }
+          const reference = result.ba[latestAnchor >= 0 ? latestAnchor : 0];
+          unwrapped = unwrapSequence(sequence, reference.ssn, reference.u);
+        } else if (result.mpdu.length) {
+          const previous = result.mpdu[result.mpdu.length - 1];
+          unwrapped = unwrapSequence(sequence, previous.sequence, previous.u);
+        }
+        result.mpdu.push({ t, frame, sequence, u: unwrapped, retry: Boolean(retry) });
+      }
+
+      derivedCache.set(raw.key, result);
+      return result;
+    }
+
+    function formatDuration(seconds) {
+      const sign = seconds < 0 ? '−' : '';
+      const magnitude = Math.abs(seconds);
+      if (magnitude < 1e-6) return `${sign}${(magnitude * 1e9).toPrecision(3)} ns`;
+      if (magnitude < 1e-3) return `${sign}${(magnitude * 1e6).toPrecision(3)} µs`;
+      if (magnitude < 1) return `${sign}${(magnitude * 1e3).toPrecision(3)} ms`;
+      if (magnitude < 1000) return `${sign}${magnitude.toPrecision(3)} s`;
+      return `${sign}${(magnitude / 1000).toPrecision(3)} ks`;
+    }
+
+    function formatTimeTick(seconds, step) {
+      const magnitude = Math.abs(seconds);
+      let scale = 1;
+      let unit = 's';
+      if (magnitude >= 1000) {
+        scale = 1000;
+        unit = 'ks';
+      } else if (magnitude < 1e-3) {
+        scale = 1e-6;
+        unit = 'µs';
+      } else if (magnitude < 1) {
+        scale = 1e-3;
+        unit = 'ms';
+      }
+      const scaledStep = Math.abs(step / scale);
+      const decimals = !Number.isFinite(scaledStep) || scaledStep <= 0 ? 2 :
+        Math.max(0, Math.min(9, -Math.floor(Math.log10(scaledStep))));
+      return `${(seconds / scale).toFixed(decimals)} ${unit}`;
+    }
+
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const power = 10 ** Math.floor(Math.log10(rawStep));
+      const fraction = rawStep / power;
+      const nice = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+      return nice * power;
+    }
+
+    function inView(t, sequence) {
+      return t >= view.x0 && t <= view.x1 && sequence >= view.y0 && sequence <= view.y1;
+    }
+
+    function xFor(t) {
+      return metrics.left + (t - view.x0) / (view.x1 - view.x0) * metrics.pw;
+    }
+
+    function yFor(sequence) {
+      return metrics.top + (view.y1 - sequence) / (view.y1 - view.y0) * metrics.ph;
+    }
+
+    function timeAt(x) {
+      return view.x0 + (x - metrics.left) / metrics.pw * (view.x1 - view.x0);
+    }
+
+    function sequenceAt(y) {
+      return view.y1 - (y - metrics.top) / metrics.ph * (view.y1 - view.y0);
+    }
+
+    function insidePlot(point) {
+      return point.x >= metrics.left && point.x <= metrics.left + metrics.pw &&
+        point.y >= metrics.top && point.y <= metrics.top + metrics.ph;
+    }
+
+    function resizeCanvas() {
+      const rect = plot.getBoundingClientRect();
+      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(300, Math.round(rect.height));
+      const pixelWidth = Math.round(width * dpr);
+      const pixelHeight = Math.round(height * dpr);
+      if (plot.width !== pixelWidth || plot.height !== pixelHeight) {
+        plot.width = pixelWidth;
+        plot.height = pixelHeight;
+      }
+      metrics = {
+        width, height, dpr,
+        left: width < 620 ? 60 : 76,
+        right: 18,
+        top: 18,
+        bottom: width < 620 ? 52 : 48
+      };
+      metrics.pw = Math.max(40, metrics.width - metrics.left - metrics.right);
+      metrics.ph = Math.max(40, metrics.height - metrics.top - metrics.bottom);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function drawGrid() {
+      ctx.fillStyle = C.white;
+      ctx.fillRect(0, 0, metrics.width, metrics.height);
+
+      ctx.save();
+      ctx.strokeStyle = C.grid;
+      ctx.lineWidth = 1;
+      ctx.fillStyle = C.muted;
+      ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+
+      const xStep = niceStep((view.x1 - view.x0) / 6);
+      let firstX = Math.ceil(view.x0 / xStep) * xStep;
+      let xTicks = 0;
+      for (let value = firstX; value <= view.x1 + xStep * 1e-6 && xTicks < 20; value += xStep, xTicks++) {
+        const x = xFor(value);
+        ctx.beginPath();
+        ctx.moveTo(x, metrics.top);
+        ctx.lineTo(x, metrics.top + metrics.ph);
+        ctx.stroke();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(formatTimeTick(value, xStep), x, metrics.top + metrics.ph + 8);
+      }
+
+      const yStep = Math.max(1, niceStep((view.y1 - view.y0) / 7));
+      let firstY = Math.ceil(view.y0 / yStep) * yStep;
+      let yTicks = 0;
+      for (let value = firstY; value <= view.y1 + yStep * 1e-6 && yTicks < 24; value += yStep, yTicks++) {
+        const y = yFor(value);
+        ctx.beginPath();
+        ctx.moveTo(metrics.left, y);
+        ctx.lineTo(metrics.left + metrics.pw, y);
+        ctx.stroke();
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(wrapSequence(value)), metrics.left - 9, y);
+      }
+
+      ctx.strokeStyle = '#7f878f';
+      ctx.strokeRect(metrics.left + .5, metrics.top + .5, metrics.pw - 1, metrics.ph - 1);
+
+      ctx.fillStyle = C.ink;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('Time', metrics.left + metrics.pw / 2, metrics.height - 3);
+      ctx.save();
+      ctx.translate(15, metrics.top + metrics.ph / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText('Sequence number (12-bit; labels modulo 4096)', 0, 0);
+      ctx.restore();
+      ctx.restore();
+    }
+
+    function clipPlot() {
+      ctx.beginPath();
+      ctx.rect(metrics.left, metrics.top, metrics.pw, metrics.ph);
+      ctx.clip();
+    }
+
+    function strokeStep(items, valueKey, color, width) {
+      if (!items.length) return;
+      ctx.beginPath();
+      ctx.moveTo(xFor(items[0].t), yFor(items[0][valueKey]));
+      for (let index = 1; index < items.length; index++) {
+        const item = items[index];
+        ctx.lineTo(xFor(item.t), yFor(items[index - 1][valueKey]));
+        ctx.lineTo(xFor(item.t), yFor(item[valueKey]));
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.stroke();
+    }
+
+    function circle(x, y, radius, fill, stroke = null, lineWidth = 1) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+      }
+    }
+
+    function cross(x, y, radius, color, lineWidth = 1.5) {
+      ctx.beginPath();
+      ctx.moveTo(x - radius, y - radius);
+      ctx.lineTo(x + radius, y + radius);
+      ctx.moveTo(x + radius, y - radius);
+      ctx.lineTo(x - radius, y + radius);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+    }
+
+    function triangle(x, y, radius, fill, stroke) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - radius);
+      ctx.lineTo(x - radius, y + radius * .78);
+      ctx.lineTo(x + radius, y + radius * .78);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    function diamond(x, y, radius, fill, stroke, lineWidth = 1.2) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - radius);
+      ctx.lineTo(x + radius, y);
+      ctx.lineTo(x, y + radius);
+      ctx.lineTo(x - radius, y);
+      ctx.closePath();
+      if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fill();
+      }
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+    }
+
+    function eventAppearance(type, bad) {
+      let appearance;
+      if (type === 'request') appearance = { color: C.purple, dash: [7, 5] };
+      else if (type === 'accepted') appearance = { color: C.green, dash: [] };
+      else if (type === 'rejected') appearance = { color: C.orange, dash: [9, 4, 2, 4] };
+      else if (type === 'delba') appearance = { color: C.darkRed, dash: [9, 4, 2, 4] };
+      else appearance = { color: C.graphite, dash: [2, 5] };
+      if (bad) appearance.color = C.graphite;
+      return appearance;
+    }
+
+    function describeBa(item) {
+      return `Frame ${item.frame} · BA · ${formatDuration(item.t)} from capture start · SSN ${item.ssn} · unwrapped ${item.u} · window upper bound ${wrapSequence(item.upper)} (${item.upper} unwrapped) · ${item.setBits} set bitmap bit${item.setBits === 1 ? '' : 's'}${item.bad ? ' · explicit FCS error' : ''}.`;
+    }
+
+    function describeBar(item) {
+      return `Frame ${item.frame} · BAR · ${formatDuration(item.t)} from capture start · starting sequence ${item.ssn} · unwrapped ${item.u}${item.bad ? ' · explicit FCS error' : ''}.`;
+    }
+
+    function describeMpdu(item) {
+      return `Frame ${item.frame} · captured QoS Data MPDU · ${formatDuration(item.t)} from capture start · sequence ${item.sequence} · unwrapped ${item.u} · Retry bit ${item.retry ? 'set' : 'clear'}. Capture presence does not prove reception.`;
+    }
+
+    function describeEvent(item) {
+      const fields = [`Frame ${item.frame}`, eventLabels[item.type], `${formatDuration(item.t)} from capture start`];
+      if (item.token != null) fields.push(`dialog token ${item.token}`);
+      if (item.status != null) fields.push(`status ${item.status}${item.status === 0 ? ' (success)' : ''}`);
+      if (item.reason != null) fields.push(`reason ${item.reason}`);
+      if (item.ssn != null) fields.push(`proposed SSN ${item.ssn}`);
+      if (item.type === 'delba') fields.push(`sender ${item.senderOriginator ? 'is' : 'is not'} originator`);
+      if (item.bad) fields.push('explicit FCS error');
+      return `${fields.join(' · ')}.`;
+    }
+
+    function describeSpan(item) {
+      return `Persistent bitmap hole · sequence ${wrapSequence(item.sequence)} (${item.sequence} unwrapped) · frames ${item.firstFrame}–${item.terminalFrame} · ${item.count} covering BAs · ${formatDuration(item.endT - item.firstT)} · outcome: ${outcomeLabels[item.outcome]}.`;
+    }
+
+    function addHit(kind, x, y, radius, description, item) {
+      visibleHits.push({ kind, x, y, radius, description, item });
+    }
+
+    function drawAgreementEventLines() {
+      if (!layers.agreements.checked) return;
+      for (const item of data.events) {
+        if (item.t < view.x0 || item.t > view.x1) continue;
+        const x = xFor(item.t);
+        const appearance = eventAppearance(item.type, item.bad);
+        ctx.save();
+        ctx.strokeStyle = appearance.color;
+        ctx.globalAlpha = .75;
+        ctx.lineWidth = item.type === 'accepted' || item.type === 'delba' || item.type === 'reset' ? 1.6 : 1.2;
+        ctx.setLineDash(appearance.dash);
+        ctx.beginPath();
+        ctx.moveTo(x, metrics.top);
+        ctx.lineTo(x, metrics.top + metrics.ph);
+        ctx.stroke();
+        ctx.restore();
+
+        const description = describeEvent(item);
+        addHit('event', x, metrics.top + metrics.ph / 2, 8, description, item);
+      }
+    }
+
+    function drawAgreementEventLabels() {
+      if (!layers.agreements.checked) return;
+      const lastLabelPixels = [-Infinity, -Infinity, -Infinity];
+      for (const item of data.events) {
+        if (item.t < view.x0 || item.t > view.x1) continue;
+        const x = xFor(item.t);
+        const lane = item.type === 'request' ? 0 :
+          item.type === 'accepted' || item.type === 'rejected' ? 1 : 2;
+        if (x - lastLabelPixels[lane] < 90) continue;
+        lastLabelPixels[lane] = x;
+        const appearance = eventAppearance(item.type, item.bad);
+        const bold = item.type === 'accepted' || item.type === 'delba' || item.type === 'reset';
+        const label = eventLabels[item.type];
+        ctx.font = `${bold ? 600 : 400} 11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+        const width = ctx.measureText(label).width + 7;
+        const height = 15;
+        const left = x - width / 2;
+        const top = metrics.top + metrics.ph * (.015 + .065 * lane);
+        ctx.fillStyle = 'rgba(255,255,255,.86)';
+        ctx.fillRect(left, top, width, height);
+        ctx.strokeStyle = appearance.color;
+        ctx.lineWidth = .8;
+        ctx.strokeRect(left + .4, top + .4, width - .8, height - .8);
+        ctx.fillStyle = appearance.color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x, top + height / 2);
+      }
+    }
+
+    function drawCore() {
+      strokeStep(data.ba, 'u', C.blue, 1.5);
+      strokeStep(data.ba, 'upper', C.orange, 1.5);
+
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      for (let index = 0; index < data.ba.length; index++) {
+        const item = data.ba[index];
+        if (inView(item.t, item.u)) {
+          const x = xFor(item.t);
+          const y = yFor(item.u);
+          circle(x, y, item.bad ? 4.5 : 3.5, item.bad ? C.grayFill : C.white, item.bad ? C.graphite : C.blueDark, 1.5);
+          addHit('ba', x, y, 8, describeBa(item), item);
+          if (layers.labels.checked) {
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = item.bad ? C.graphite : C.blueDark;
+            ctx.fillText(`${item.ssn} (${item.setBits})`, x, y + 7);
+          }
+        }
+        if (item.bad && inView(item.t, item.upper)) {
+          circle(xFor(item.t), yFor(item.upper), 3.5, C.graphite);
+        }
+        if (layers.deltas.checked && index > 0) {
+          const previous = data.ba[index - 1];
+          const midT = (previous.t + item.t) / 2;
+          const labelSequence = previous.u;
+          if (inView(midT, labelSequence)) {
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = C.purple;
+            ctx.fillText(`Δt ${formatDuration(item.t - previous.t)}`, xFor(midT), yFor(labelSequence) - 6);
+          }
+        }
+      }
+
+      for (const item of data.bar) {
+        if (!inView(item.t, item.u)) continue;
+        const x = xFor(item.t);
+        const y = yFor(item.u);
+        triangle(x, y, 4.5, item.bad ? C.grayFill : C.white, item.bad ? C.graphite : C.purple);
+        addHit('bar', x, y, 8, describeBar(item), item);
+      }
+    }
+
+    function drawOverlays() {
+      if (layers.set.checked) {
+        ctx.beginPath();
+        for (const item of data.set) {
+          if (!inView(item.t, item.sequence)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.sequence);
+          ctx.moveTo(x + 2.2, y);
+          ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = C.green;
+        ctx.fill();
+        ctx.beginPath();
+        for (const item of data.set) {
+          if (!item.bad || !inView(item.t, item.sequence)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.sequence);
+          ctx.moveTo(x + 2.8, y);
+          ctx.arc(x, y, 2.8, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = C.graphite;
+        ctx.fill();
+      }
+
+      if (layers.holes.checked) {
+        ctx.beginPath();
+        for (const item of data.prior) {
+          if (item.bad || !inView(item.t, item.sequence)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.sequence);
+          ctx.moveTo(x - 3, y - 3);
+          ctx.lineTo(x + 3, y + 3);
+          ctx.moveTo(x + 3, y - 3);
+          ctx.lineTo(x - 3, y + 3);
+        }
+        ctx.strokeStyle = C.green;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.beginPath();
+        for (const item of data.holes) {
+          if (item.bad || !inView(item.t, item.sequence)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.sequence);
+          ctx.moveTo(x - 3, y - 3);
+          ctx.lineTo(x + 3, y + 3);
+          ctx.moveTo(x + 3, y - 3);
+          ctx.lineTo(x - 3, y + 3);
+        }
+        ctx.strokeStyle = C.red;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.beginPath();
+        for (const item of [...data.prior, ...data.holes]) {
+          if (!item.bad || !inView(item.t, item.sequence)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.sequence);
+          ctx.moveTo(x - 4, y - 4);
+          ctx.lineTo(x + 4, y + 4);
+          ctx.moveTo(x + 4, y - 4);
+          ctx.lineTo(x - 4, y + 4);
+        }
+        ctx.strokeStyle = C.graphite;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      if (layers.gaps.checked) {
+        ctx.beginPath();
+        for (const item of data.gaps) {
+          if (!inView(item.t, item.sequence)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.sequence);
+          ctx.moveTo(x + 3.2, y);
+          ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = C.graphite;
+        ctx.fill();
+      }
+
+      if (layers.mpdus.checked) {
+        ctx.beginPath();
+        for (const item of data.mpdu) {
+          if (item.retry || !inView(item.t, item.u)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.u);
+          ctx.moveTo(x, y - 3.5);
+          ctx.lineTo(x + 3.5, y);
+          ctx.lineTo(x, y + 3.5);
+          ctx.lineTo(x - 3.5, y);
+          ctx.closePath();
+          addHit('mpdu', x, y, 7, describeMpdu(item), item);
+        }
+        ctx.fillStyle = C.gold;
+        ctx.fill();
+        ctx.strokeStyle = C.goldEdge;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        for (const item of data.mpdu) {
+          if (!item.retry || !inView(item.t, item.u)) continue;
+          const x = xFor(item.t);
+          const y = yFor(item.u);
+          ctx.moveTo(x, y - 4.5);
+          ctx.lineTo(x + 4.5, y);
+          ctx.lineTo(x, y + 4.5);
+          ctx.lineTo(x - 4.5, y);
+          ctx.closePath();
+          addHit('mpdu', x, y, 8, describeMpdu(item), item);
+        }
+        ctx.strokeStyle = C.retryOrange;
+        ctx.lineWidth = 1.75;
+        ctx.stroke();
+      }
+
+      if (layers.persistent.checked) {
+        for (const item of data.spans) {
+          if (item.firstT > view.x1 || item.endT < view.x0 || item.sequence < view.y0 || item.sequence > view.y1) continue;
+          const y = yFor(item.sequence);
+          const x0 = xFor(Math.max(item.firstT, view.x0));
+          const x1 = xFor(Math.min(item.endT, view.x1));
+          ctx.beginPath();
+          ctx.moveTo(x0, y);
+          ctx.lineTo(x1, y);
+          ctx.strokeStyle = C.darkRed;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          if (item.endT >= view.x0 && item.endT <= view.x1) {
+            const x = xFor(item.endT);
+            ctx.fillStyle = C.white;
+            ctx.strokeStyle = C.darkRed;
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(x - 3.5, y - 3.5, 7, 7);
+            ctx.strokeRect(x - 3.5, y - 3.5, 7, 7);
+            addHit('span', x, y, 7, describeSpan(item), item);
+          }
+        }
+      }
+    }
+
+    function drawLegend() {
+      const entries = [
+        ['line-blue', 'BA starting sequence'],
+        ['line-orange', 'BA window upper bound'],
+        ['triangle', 'BAR starting sequence'],
+        ['diamond', 'Captured QoS MPDU (Retry clear)'],
+        ['retry-diamond', 'Captured QoS MPDU (Retry set)'],
+        ['dot-green', 'BA bitmap set'],
+        ['cross-green', 'BA zero after prior set'],
+        ['cross-red', 'BA zero without prior set'],
+        ['square-red', 'Persistent BA hole'],
+        ['dot-gray', 'No BA ACK before SSN advance'],
+        ['bad-fcs', 'BA with explicit FCS error'],
+        ['event', 'ADDBA / DELBA event']
+      ];
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+      const rowHeight = 17;
+      const padding = 7;
+      let maxWidth = 0;
+      for (const [, label] of entries) maxWidth = Math.max(maxWidth, ctx.measureText(label).width);
+      const columns = metrics.width >= 920 ? 2 : 1;
+      const rows = Math.ceil(entries.length / columns);
+      const columnWidth = maxWidth + 39;
+      const boxWidth = columns * columnWidth + padding * 2;
+      const boxHeight = rows * rowHeight + padding * 2;
+      const left = metrics.left + metrics.pw - boxWidth - 8;
+      const top = metrics.top + 8;
+      ctx.fillStyle = 'rgba(255,255,255,.90)';
+      ctx.strokeStyle = '#b3b8bd';
+      ctx.lineWidth = 1;
+      ctx.fillRect(left, top, boxWidth, boxHeight);
+      ctx.strokeRect(left + .5, top + .5, boxWidth - 1, boxHeight - 1);
+
+      entries.forEach(([kind, label], index) => {
+        const column = Math.floor(index / rows);
+        const row = index % rows;
+        const x = left + padding + column * columnWidth + 8;
+        const y = top + padding + row * rowHeight + rowHeight / 2;
+        if (kind === 'line-blue' || kind === 'line-orange') {
+          ctx.beginPath();
+          ctx.moveTo(x - 7, y);
+          ctx.lineTo(x + 7, y);
+          ctx.strokeStyle = kind === 'line-blue' ? C.blue : C.orange;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else if (kind === 'triangle') triangle(x, y, 3.5, C.white, C.purple);
+        else if (kind === 'dot-green') circle(x, y, 2.5, C.green);
+        else if (kind === 'cross-green') cross(x, y, 3, C.green, 1.4);
+        else if (kind === 'cross-red') cross(x, y, 3, C.red, 1.4);
+        else if (kind === 'diamond') diamond(x, y, 3.5, C.gold, C.goldEdge);
+        else if (kind === 'retry-diamond') diamond(x, y, 4.5, null, C.retryOrange, 1.75);
+        else if (kind === 'square-red') {
+          ctx.fillStyle = C.white;
+          ctx.strokeStyle = C.darkRed;
+          ctx.lineWidth = 1.3;
+          ctx.fillRect(x - 3, y - 3, 6, 6);
+          ctx.strokeRect(x - 3, y - 3, 6, 6);
+        } else if (kind === 'dot-gray') circle(x, y, 3, C.graphite, C.grayFill, 1);
+        else if (kind === 'bad-fcs') circle(x, y, 3.5, C.grayFill, C.graphite, 1.3);
+        else {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(x, y - 6);
+          ctx.lineTo(x, y + 6);
+          ctx.strokeStyle = C.purple;
+          ctx.lineWidth = 1.4;
+          ctx.setLineDash([4, 3]);
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.fillStyle = C.ink;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x + 13, y);
+      });
+    }
+
+    function drawRubberBand() {
+      if (!pointer || mode !== 'zoom' || !pointer.moved) return;
+      const x = Math.min(pointer.start.x, pointer.last.x);
+      const y = Math.min(pointer.start.y, pointer.last.y);
+      const width = Math.abs(pointer.start.x - pointer.last.x);
+      const height = Math.abs(pointer.start.y - pointer.last.y);
+      ctx.save();
+      ctx.fillStyle = 'rgba(52,101,164,.16)';
+      ctx.strokeStyle = C.blue;
+      ctx.setLineDash([5, 3]);
+      ctx.lineWidth = 1;
+      ctx.fillRect(x, y, width, height);
+      ctx.strokeRect(x + .5, y + .5, Math.max(0, width - 1), Math.max(0, height - 1));
+      ctx.restore();
+    }
+
+    function countInView(items, timeKey, sequenceKey) {
+      let count = 0;
+      for (const item of items) {
+        if (inView(item[timeKey], item[sequenceKey])) count++;
+      }
+      return count;
+    }
+
+    function updateStatus() {
+      const ba = countInView(data.ba, 't', 'u');
+      const bar = countInView(data.bar, 't', 'u');
+      const mpdu = countInView(data.mpdu, 't', 'u');
+      const retryMpdu = data.mpdu.filter(item => item.retry && inView(item.t, item.u)).length;
+      const retryRate = mpdu > 0 ? `${(100 * retryMpdu / mpdu).toFixed(1)}%` : 'n/a';
+      const set = countInView(data.set, 't', 'sequence');
+      const holes = countInView(data.holes, 't', 'sequence');
+      const prior = countInView(data.prior, 't', 'sequence');
+      const gaps = countInView(data.gaps, 't', 'sequence');
+      const bad = data.ba.filter(item => item.bad && inView(item.t, item.u)).length;
+      const agreements = data.events.filter(item => item.type !== 'reset' && item.t >= view.x0 && item.t <= view.x1).length;
+      const resets = data.events.filter(item => item.type === 'reset' && item.t >= view.x0 && item.t <= view.x1).length;
+      const spans = data.spans.filter(item =>
+        item.sequence >= view.y0 && item.sequence <= view.y1 &&
+        item.firstT <= view.x1 && item.endT >= view.x0).length;
+      const totals = capture.totals;
+      status.textContent =
+        `${capture.sessions.length} session(s) available · X-axis duration: ${formatDuration(view.x1 - view.x0)} · ` +
+        `In view: ${ba} BA / ${bar} BAR · ${mpdu} captured QoS Data MPDU(s) · ` +
+        `Observed MPDU retries: ${retryMpdu} / ${mpdu} (${retryRate}) · ` +
+        `${agreements} ADDBA/DELBA event(s) · ${resets} inferred SSN reset(s) · ` +
+        `${set} bitmap-set position(s) · ${holes} bitmap hole(s) · ${prior} prior-set zero(s) · ` +
+        `${spans} persistent-hole lifetime(s) · ${gaps} no-BA-ACK-before-SSN-advance dot(s) · ` +
+        `${bad} explicit-FCS-error BA(s) · Capture totals: ${totals.unsupportedBa}/${totals.unsupportedBar} unsupported BA/BAR · ` +
+        `${totals.malformedBa}/${totals.malformedBar} malformed BA/BAR`;
+    }
+
+    function render() {
+      if (!session || !data) return;
+      resizeCanvas();
+      visibleHits = [];
+      drawGrid();
+      ctx.save();
+      clipPlot();
+      drawAgreementEventLines();
+      drawCore();
+      drawOverlays();
+      drawAgreementEventLabels();
+      ctx.restore();
+      drawLegend();
+      drawRubberBand();
+      updateStatus();
+    }
+
+    function scheduleRender() {
+      if (renderScheduled) return;
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        renderScheduled = false;
+        render();
+      });
+    }
+
+    function rangeFromValues(values, fallback = [0, 1]) {
+      let low = Infinity;
+      let high = -Infinity;
+      for (const value of values) {
+        if (!Number.isFinite(value)) continue;
+        if (value < low) low = value;
+        if (value > high) high = value;
+      }
+      return low === Infinity ? fallback : [low, high];
+    }
+
+    function resetView() {
+      if (!data) return;
+      const xValues = [];
+      data.ba.forEach(item => xValues.push(item.t));
+      data.bar.forEach(item => xValues.push(item.t));
+      if (layers.mpdus.checked) data.mpdu.forEach(item => xValues.push(item.t));
+      const hadSamples = xValues.length > 0;
+      if (layers.agreements.checked) {
+        data.events.forEach(item => {
+          if (!hadSamples || item.type === 'accepted' || item.type === 'delba' || item.type === 'reset') xValues.push(item.t);
+        });
+      }
+      let [x0, x1] = rangeFromValues(xValues);
+      if (x1 - x0 < 1e-12) {
+        x0 -= .5;
+        x1 += .5;
+      } else {
+        const center = (x0 + x1) / 2;
+        const half = (x1 - x0) * 1.08 / 2;
+        x0 = center - half;
+        x1 = center + half;
+      }
+
+      const yValues = [];
+      data.ba.forEach(item => yValues.push(item.u, item.upper));
+      data.bar.forEach(item => yValues.push(item.u));
+      if (layers.set.checked) data.set.forEach(item => yValues.push(item.sequence));
+      if (layers.holes.checked) {
+        data.prior.forEach(item => yValues.push(item.sequence));
+        data.holes.forEach(item => yValues.push(item.sequence));
+      }
+      if (layers.persistent.checked) data.spans.forEach(item => yValues.push(item.sequence));
+      if (layers.gaps.checked) data.gaps.forEach(item => yValues.push(item.sequence));
+      if (layers.mpdus.checked) data.mpdu.forEach(item => yValues.push(item.u));
+      let [y0, y1] = rangeFromValues(yValues);
+      if (y1 - y0 < 1) {
+        const center = (y0 + y1) / 2;
+        y0 = center - 1;
+        y1 = center + 1;
+      } else {
+        const center = (y0 + y1) / 2;
+        const half = (y1 - y0) * 1.12 / 2;
+        y0 = center - half;
+        y1 = center + half;
+      }
+      view = { x0, x1, y0, y1 };
+      hideTooltip();
+      scheduleRender();
+    }
+
+    function chooseSession(key) {
+      session = sessionByKey.get(key);
+      data = deriveSession(session);
+      plot.setAttribute(
+        'aria-label',
+        `Interactive WLAN Block Ack graph for ${session.ta} to ${session.ra}, TID ${session.tid}, showing capture-relative time against unwrapped 12-bit sequence number`
+      );
+      detail.textContent = data.ba.length ? describeBa(data.ba[0]) :
+        'This session contains BARs but no supported Block Ack response.';
+      layers.mpdus.disabled = data.mpdu.length === 0;
+      layers.persistent.disabled = data.spans.length === 0;
+      layers.agreements.disabled = data.events.length === 0;
+      resetView();
+    }
+
+    function populateTids(pair, preferredKey = null) {
+      tidSelect.replaceChildren();
+      for (const item of pair.sessions) {
+        const option = document.createElement('option');
+        option.value = item.key;
+        option.textContent = `TID ${item.tid} · ${item.baCount} BA(s) · ${item.barCount} BAR(s)`;
+        tidSelect.append(option);
+      }
+      if (preferredKey && pair.sessions.some(item => item.key === preferredKey)) tidSelect.value = preferredKey;
+      chooseSession(tidSelect.value);
+    }
+
+    function initializeSelectors() {
+      buildPairs();
+      if (!pairs.length) return;
+      for (let index = 0; index < pairs.length; index++) {
+        const pair = pairs[index];
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = `${pair.ta} → ${pair.ra} · ${pair.baCount} BA(s) · ${pair.sessions.length} TID(s)`;
+        pairSelect.append(option);
+      }
+      populateTids(pairs[0]);
+    }
+
+    function localPoint(event) {
+      const rect = plot.getBoundingClientRect();
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
+
+    function hitDistance(hit, point) {
+      if (hit.kind === 'event') {
+        const dx = Math.abs(hit.x - point.x);
+        return point.y >= metrics.top && point.y <= metrics.top + metrics.ph ? dx : Infinity;
+      }
+      return Math.hypot(hit.x - point.x, hit.y - point.y);
+    }
+
+    function nearestHit(point) {
+      let best = null;
+      let bestDistance = 10;
+      for (const hit of visibleHits) {
+        const distance = hitDistance(hit, point);
+        const threshold = Math.max(bestDistance, hit.radius || 0);
+        if (distance <= threshold && distance < bestDistance) {
+          best = hit;
+          bestDistance = distance;
+        }
+      }
+      return best;
+    }
+
+    function showTooltip(hit, point) {
+      if (!hit) {
+        hideTooltip();
+        return;
+      }
+      tooltip.textContent = hit.description;
+      tooltip.style.display = 'block';
+      const frameRect = plotFrame.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const left = Math.max(8, Math.min(point.x + 13, frameRect.width - tooltipRect.width - 8));
+      const top = Math.max(8, Math.min(point.y + 13, frameRect.height - tooltipRect.height - 8));
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    function hideTooltip() {
+      hoverHit = null;
+      tooltip.style.display = 'none';
+    }
+
+    function zoomAxis(axis, factor, center = null) {
+      const lowKey = `${axis}0`;
+      const highKey = `${axis}1`;
+      const low = view[lowKey];
+      const high = view[highKey];
+      const pivot = center == null ? (low + high) / 2 : center;
+      let nextLow = pivot + (low - pivot) * factor;
+      let nextHigh = pivot + (high - pivot) * factor;
+      const minimumSpan = axis === 'x' ? 1e-9 : 1e-4;
+      if (!Number.isFinite(nextLow) || !Number.isFinite(nextHigh)) return;
+      if (nextHigh - nextLow < minimumSpan) {
+        nextLow = pivot - minimumSpan / 2;
+        nextHigh = pivot + minimumSpan / 2;
+      }
+      view[lowKey] = nextLow;
+      view[highKey] = nextHigh;
+    }
+
+    function finishPointer(event) {
+      if (!pointer) return;
+      if (mode === 'zoom' && pointer.moved) {
+        const a = pointer.start;
+        const b = pointer.last;
+        const width = Math.abs(a.x - b.x);
+        const height = Math.abs(a.y - b.y);
+        if (width >= 20 || height >= 20) {
+          const left = Math.max(metrics.left, Math.min(a.x, b.x));
+          const right = Math.min(metrics.left + metrics.pw, Math.max(a.x, b.x));
+          const top = Math.max(metrics.top, Math.min(a.y, b.y));
+          const bottom = Math.min(metrics.top + metrics.ph, Math.max(a.y, b.y));
+          if (right > left && bottom > top) {
+            view = {
+              x0: timeAt(left),
+              x1: timeAt(right),
+              y0: sequenceAt(bottom),
+              y1: sequenceAt(top)
+            };
+          }
+        }
+      } else if (!pointer.moved) {
+        const hit = nearestHit(pointer.last);
+        if (hit) detail.textContent = hit.description;
+      }
+      pointer = null;
+      plot.style.cursor = mode === 'zoom' ? 'crosshair' : 'grab';
+      if (event && plot.hasPointerCapture(event.pointerId)) plot.releasePointerCapture(event.pointerId);
+      render();
+    }
+
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (file) loadCaptureFile(file);
+    });
+    cancelLoad.addEventListener('click', () => cancelImport(true));
+
+    pairSelect.addEventListener('change', () => {
+      const pair = pairs[Number(pairSelect.value)];
+      if (pair) populateTids(pair);
+    });
+    tidSelect.addEventListener('change', () => chooseSession(tidSelect.value));
+
+    mouseModeInputs.forEach(input => {
+      input.addEventListener('change', () => {
+        mode = input.value;
+        plot.style.cursor = mode === 'zoom' ? 'crosshair' : 'grab';
+      });
+    });
+
+    layerIds.forEach(name => layers[name].addEventListener('change', render));
+    resetButton.addEventListener('click', resetView);
+
+    saveButton.addEventListener('click', () => {
+      if (!session || !data) return;
+      const exportSession = session;
+      render();
+      plot.toBlob(blob => {
+        if (!blob) return;
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `wlan-ba-${exportSession.ta.replaceAll(':', '')}-${exportSession.ra.replaceAll(':', '')}-tid${exportSession.tid}.png`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      }, 'image/png');
+    });
+
+    plot.addEventListener('pointerdown', event => {
+      const point = localPoint(event);
+      let dragAxis = 'both';
+      if (!insidePlot(point)) {
+        const overXAxis = mode === 'drag' &&
+          point.x >= metrics.left && point.x <= metrics.left + metrics.pw &&
+          point.y > metrics.top + metrics.ph && point.y <= metrics.height;
+        const overYAxis = mode === 'drag' &&
+          point.x >= 0 && point.x < metrics.left &&
+          point.y >= metrics.top && point.y <= metrics.top + metrics.ph;
+        if (!overXAxis && !overYAxis) return;
+        dragAxis = overXAxis ? 'x' : 'y';
+      }
+      hideTooltip();
+      plot.setPointerCapture(event.pointerId);
+      pointer = { start: point, last: point, original: { ...view }, moved: false, dragAxis };
+      plot.style.cursor = mode === 'zoom' ? 'crosshair' :
+        dragAxis === 'x' ? 'ew-resize' : dragAxis === 'y' ? 'ns-resize' : 'grabbing';
+    });
+
+    plot.addEventListener('pointermove', event => {
+      const point = localPoint(event);
+      if (!pointer) {
+        const hit = nearestHit(point);
+        if (hit !== hoverHit) {
+          hoverHit = hit;
+          showTooltip(hit, point);
+        } else if (hit) {
+          showTooltip(hit, point);
+        }
+        return;
+      }
+      pointer.last = point;
+      if (Math.hypot(point.x - pointer.start.x, point.y - pointer.start.y) > 4) pointer.moved = true;
+      if (mode === 'drag' && pointer.moved) {
+        const dx = (point.x - pointer.start.x) / metrics.pw * (pointer.original.x1 - pointer.original.x0);
+        const dy = (point.y - pointer.start.y) / metrics.ph * (pointer.original.y1 - pointer.original.y0);
+        view = {
+          x0: pointer.dragAxis === 'y' ? pointer.original.x0 : pointer.original.x0 - dx,
+          x1: pointer.dragAxis === 'y' ? pointer.original.x1 : pointer.original.x1 - dx,
+          y0: pointer.dragAxis === 'x' ? pointer.original.y0 : pointer.original.y0 + dy,
+          y1: pointer.dragAxis === 'x' ? pointer.original.y1 : pointer.original.y1 + dy
+        };
+      }
+      scheduleRender();
+    });
+
+    plot.addEventListener('pointerleave', () => {
+      if (!pointer) hideTooltip();
+    });
+    plot.addEventListener('pointerup', finishPointer);
+    plot.addEventListener('pointercancel', finishPointer);
+
+    plot.addEventListener('wheel', event => {
+      event.preventDefault();
+      const point = localPoint(event);
+      const pixels = event.deltaMode === 1 ? event.deltaY * 16 :
+        event.deltaMode === 2 ? event.deltaY * metrics.height : event.deltaY;
+      const wheelSteps = Math.max(-4, Math.min(4, pixels / 100));
+      const factor = (1 / .85) ** wheelSteps;
+      const overXAxis = point.y > metrics.top + metrics.ph && point.x >= metrics.left;
+      const overYAxis = point.x < metrics.left && point.y >= metrics.top && point.y <= metrics.top + metrics.ph;
+      if (overXAxis) zoomAxis('x', factor, timeAt(point.x));
+      else if (overYAxis) zoomAxis('y', factor, sequenceAt(point.y));
+      else if (insidePlot(point)) {
+        zoomAxis('x', factor, timeAt(point.x));
+        zoomAxis('y', factor, sequenceAt(point.y));
+      } else return;
+      hideTooltip();
+      scheduleRender();
+    }, { passive: false });
+
+    plot.addEventListener('keydown', event => {
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        mode = mode === 'drag' ? 'zoom' : 'drag';
+        document.querySelector(`input[name="mouse-mode"][value="${mode}"]`).checked = true;
+        plot.style.cursor = mode === 'zoom' ? 'crosshair' : 'grab';
+      } else if (key === 'x') {
+        zoomAxis('x', event.shiftKey ? 1 / .85 : .85);
+      } else if (key === 'y') {
+        zoomAxis('y', event.shiftKey ? 1 / .85 : .85);
+      } else if (event.key === 'Home') {
+        resetView();
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const delta = (view.x1 - view.x0) * .08 * (event.key === 'ArrowLeft' ? -1 : 1);
+        view.x0 += delta;
+        view.x1 += delta;
+      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        const delta = (view.y1 - view.y0) * .08 * (event.key === 'ArrowDown' ? -1 : 1);
+        view.y0 += delta;
+        view.y1 += delta;
+      } else return;
+      event.preventDefault();
+      render();
+    });
+
+    new ResizeObserver(scheduleRender).observe(plotFrame);
+
+    clearCapture();
+    setViewerState('empty');
+  })();
+  </script>
+</body>
+</html>
