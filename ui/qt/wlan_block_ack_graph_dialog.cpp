@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include <epan/epan_dissect.h>
+#include <epan/frame_data.h>
 #include <epan/ftypes/ftypes.h>
 #include <epan/packet.h>
 #include <epan/proto.h>
@@ -61,11 +62,24 @@ constexpr int sequence_half_range = sequence_modulus / 2;
 constexpr qint64 nanoseconds_per_second = 1000000000;
 constexpr int min_zoom_pixels = 20;
 constexpr int min_agreement_event_label_spacing = 90;
+constexpr int min_gap_outlier_intervals = 5;
+constexpr long double median_absolute_deviation_scale = 1.4826L;
+constexpr long double gap_outlier_deviation_multiplier = 3.0L;
+constexpr long double gap_outlier_relative_multiplier = 1.5L;
 
 static int wrappedSequence(qint64 sequence)
 {
     sequence %= sequence_modulus;
     return static_cast<int>(sequence < 0 ? sequence + sequence_modulus : sequence);
+}
+
+static qint64 timestampQuantumNanoseconds(unsigned int precision)
+{
+    qint64 quantum = nanoseconds_per_second;
+    for (unsigned int digit = 0; digit < precision && quantum > 1; digit++) {
+        quantum /= 10;
+    }
+    return quantum;
 }
 
 static qint64 floorDivide(qint64 dividend, qint64 divisor)
@@ -149,6 +163,7 @@ struct BaSample {
     uint32_t frame_number = 0;
     double relative_time = 0.0;
     qint64 relative_time_nanoseconds = 0;
+    qint64 timestamp_quantum_nanoseconds = 1;
     bool is_request = false;
     bool explicit_fcs_error = false;
     uint32_t type = 0;
@@ -660,11 +675,30 @@ static int bitmapSetBitCount(const BaSample &sample)
     return count;
 }
 
+static qint64 medianNanoseconds(QVector<qint64> values)
+{
+    if (values.isEmpty()) {
+        return 0;
+    }
+
+    std::sort(values.begin(), values.end());
+    qsizetype middle = values.size() / 2;
+    if (values.size() % 2 != 0) {
+        return values.at(middle);
+    }
+
+    qint64 lower = values.at(middle - 1);
+    qint64 upper = values.at(middle);
+    return lower + (upper - lower) / 2;
+}
+
 struct BaIntervalMetrics {
     qint64 interval_nanoseconds = 0;
+    qint64 timestamp_quantum_nanoseconds = 1;
     qint64 ssn_rise = 0;
     bool has_interval = false;
     bool has_ssn_rate = false;
+    bool eligible_for_gap_outlier = false;
 };
 
 struct BaViewMetrics {
@@ -672,6 +706,9 @@ struct BaViewMetrics {
     int interval_count = 0;
     qint64 ssn_rise = 0;
     qint64 ssn_rise_elapsed_nanoseconds = 0;
+    qint64 typical_gap_nanoseconds = 0;
+    long double unusual_gap_base_threshold_nanoseconds = 0.0L;
+    bool has_unusual_gap_threshold = false;
     QVector<BaIntervalMetrics> intervals;
 };
 
@@ -687,6 +724,7 @@ static BaViewMetrics calculateBaViewMetrics(
     qsizetype sample_count = std::min(sample_indexes.size(),
                                       unwrapped_sequences.size());
     metrics.intervals.resize(sample_count);
+    QVector<qint64> positive_intervals;
     qsizetype event_index = 0;
     int analysis_epoch = 0;
     int previous_epoch = -1;
@@ -744,7 +782,7 @@ static BaViewMetrics calculateBaViewMetrics(
                 // values used for plotting can put one interval a few ULPs
                 // above another and create a false highlight. Include a
                 // zero-length interval in the BA delta average, but exclude it
-                // from the SSN rate below.
+                // from the SSN rate and unusual-gap baseline below.
                 interval_nanoseconds = sample.relative_time_nanoseconds -
                         samples.at(previous_sample_index)
                         .relative_time_nanoseconds;
@@ -755,6 +793,11 @@ static BaViewMetrics calculateBaViewMetrics(
                     metrics.interval_count++;
                     interval_metrics.interval_nanoseconds =
                             interval_nanoseconds;
+                    interval_metrics.timestamp_quantum_nanoseconds =
+                            std::max(
+                                sample.timestamp_quantum_nanoseconds,
+                                samples.at(previous_sample_index)
+                                .timestamp_quantum_nanoseconds);
                     interval_metrics.has_interval = true;
                 }
             }
@@ -762,6 +805,11 @@ static BaViewMetrics calculateBaViewMetrics(
 
         bool continues_visible_epoch = adjacent_visible &&
                 interval_is_ordered && analysis_epoch == previous_epoch;
+        interval_metrics.eligible_for_gap_outlier =
+                continues_visible_epoch;
+        if (continues_visible_epoch && interval_nanoseconds > 0) {
+            positive_intervals.append(interval_nanoseconds);
+        }
         if (!continues_visible_epoch) {
             finish_rate_run();
             if (visible) {
@@ -784,6 +832,35 @@ static BaViewMetrics calculateBaViewMetrics(
         previous_epoch = analysis_epoch;
     }
     finish_rate_run();
+
+    if (positive_intervals.size() >= min_gap_outlier_intervals) {
+        // Do not use the arithmetic BA delta average as an alert threshold.
+        // A single short interval would otherwise make most normal intervals
+        // appear unusually long. MAD is robust to isolated stalls, while the
+        // relative and timestamp-precision guards keep quantized, zero-spread
+        // samples such as 1, 2, 2, 2, 2, 2 ms from producing false highlights.
+        qint64 median_nanoseconds = medianNanoseconds(positive_intervals);
+        QVector<qint64> deviations;
+        deviations.reserve(positive_intervals.size());
+        for (qint64 interval_nanoseconds : positive_intervals) {
+            deviations.append(interval_nanoseconds >= median_nanoseconds
+                    ? interval_nanoseconds - median_nanoseconds
+                    : median_nanoseconds - interval_nanoseconds);
+        }
+        qint64 median_absolute_deviation =
+                medianNanoseconds(deviations);
+        long double robust_threshold =
+                median_nanoseconds +
+                gap_outlier_deviation_multiplier *
+                median_absolute_deviation_scale *
+                median_absolute_deviation;
+        long double relative_threshold =
+                gap_outlier_relative_multiplier * median_nanoseconds;
+        metrics.typical_gap_nanoseconds = median_nanoseconds;
+        metrics.unusual_gap_base_threshold_nanoseconds =
+                std::max(robust_threshold, relative_threshold);
+        metrics.has_unusual_gap_threshold = true;
+    }
 
     return metrics;
 }
@@ -925,7 +1002,8 @@ public:
     QCheckBox *show_acked_mpdu_rate = nullptr;
     QCheckBox *show_ssn_labels = nullptr;
     QCheckBox *show_time_deltas = nullptr;
-    QCheckBox *highlight_above_average = nullptr;
+    QCheckBox *highlight_unusual_gaps = nullptr;
+    QCheckBox *highlight_high_ssn_rates = nullptr;
     QCheckBox *show_ack_gaps = nullptr;
     QCheckBox *show_mpdus = nullptr;
     QCheckBox *show_persistent_holes = nullptr;
@@ -1044,10 +1122,10 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                 tr("Show each BA window as [SSN, SSN + bitmap length) below its blue BA "
                    "point. Both endpoints use 12-bit sequence numbers, so the exclusive "
                    "upper bound wraps modulo 4096. The blue BA starting-sequence trace "
-                   "remains visible. When above-average highlighting is enabled, the "
-                   "destination BA label for an SSN rise rate above the current view "
+                   "remains visible. When high-SSN-rate highlighting is enabled, the "
+                   "destination BA label for an SSN rise rate above the current visible-view "
                    "average is bold yellow. Intervals with zero captured time delta are "
-                   "excluded from the SSN rate and SSN-rate highlighting. "
+                   "excluded from the SSN rate and its highlighting. "
                    "Explicit-FCS-error BA labels remain gray."));
     d_->show_time_deltas = new QCheckBox(tr("Show BA time deltas"), this);
     d_->show_time_deltas->setObjectName(QStringLiteral("showBaTimeDeltasCheckBox"));
@@ -1055,17 +1133,30 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     d_->show_time_deltas->setToolTip(
                 tr("Show the elapsed time since the previous BA in the selected STA pair and "
                    "TID above the blue segment between them. The first BA has no time delta. "
-                   "When above-average highlighting is enabled, a bold yellow label marks a "
-                   "delta above the current view average. A zero delta remains displayed and "
-                   "is included in the current-view average."));
-    d_->highlight_above_average = new QCheckBox(
-                tr("Highlight above average"), this);
-    d_->highlight_above_average->setObjectName(
-                QStringLiteral("highlightAboveAverageLabelsCheckBox"));
-    d_->highlight_above_average->setChecked(true);
-    d_->highlight_above_average->setToolTip(
-                tr("Highlight displayed SSN and BA time-delta labels when their per-interval "
-                   "SSN rise rate or time delta is above the current visible-view average."));
+                   "When unusual-gap highlighting is enabled, a bold yellow label marks a "
+                   "robust high outlier among positive intervals in the current view and "
+                   "agreement epoch. A zero delta remains displayed and is included in the "
+                   "current-view arithmetic average."));
+    d_->highlight_unusual_gaps = new QCheckBox(
+                tr("Highlight unusual BA gaps"), this);
+    d_->highlight_unusual_gaps->setObjectName(
+                QStringLiteral("highlightUnusualBaGapsCheckBox"));
+    d_->highlight_unusual_gaps->setChecked(true);
+    d_->highlight_unusual_gaps->setToolTip(
+                tr("Highlight unusually long displayed BA time-delta labels. At least five "
+                   "positive intervals that do not cross BA agreement or reset boundaries "
+                   "must be visible. The cutoff uses their median and median absolute "
+                   "deviation, with guards for capture timestamp precision and small relative "
+                   "differences; typical intervals are not highlighted."));
+    d_->highlight_high_ssn_rates = new QCheckBox(
+                tr("Highlight high SSN rates"), this);
+    d_->highlight_high_ssn_rates->setObjectName(
+                QStringLiteral("highlightHighSsnRatesCheckBox"));
+    d_->highlight_high_ssn_rates->setChecked(false);
+    d_->highlight_high_ssn_rates->setToolTip(
+                tr("Highlight displayed destination BA labels when their per-interval SSN "
+                   "rise rate is above the current visible-view average. A high SSN rise "
+                   "rate usually indicates progress rather than a problem."));
     d_->show_ack_gaps = new QCheckBox(tr("Show BA ACK gaps"), this);
     d_->show_ack_gaps->setObjectName(QStringLiteral("showBaAckGapsCheckBox"));
     d_->show_ack_gaps->setChecked(false);
@@ -1392,9 +1483,13 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
                    "stale or backward BAs do not count as negative progress or cause their "
                    "recovery to be counted twice. Explicit-FCS-error BAs remain included in "
                    "the averages because they are plotted in the view, but their SSN labels "
-                   "remain gray instead of receiving a rate highlight. These averages "
-                   "control the bold yellow highlighting on displayed SSN and BA Δt labels "
-                   "when Highlight above average is enabled."));
+                   "remain gray instead of receiving a rate highlight. High SSN-rate "
+                   "highlighting compares with the visible-view SSN-rate average. Unusual "
+                   "BA-gap highlighting instead requires at least five positive visible "
+                   "intervals within BA agreement epochs and uses a robust median-based "
+                   "outlier cutoff, so intervals across agreement/reset boundaries are not "
+                   "alerts and the arithmetic BA Δt average remains descriptive rather than "
+                   "acting as an alert threshold."));
     main_layout->addWidget(d_->status_label);
 
     QHBoxLayout *mouse_layout = new QHBoxLayout;
@@ -1415,7 +1510,8 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
     QHBoxLayout *display_layout = new QHBoxLayout;
     display_layout->addWidget(d_->show_ssn_labels);
     display_layout->addWidget(d_->show_time_deltas);
-    display_layout->addWidget(d_->highlight_above_average);
+    display_layout->addWidget(d_->highlight_unusual_gaps);
+    display_layout->addWidget(d_->highlight_high_ssn_rates);
     display_layout->addWidget(d_->show_ack_gaps);
     display_layout->addWidget(d_->show_mpdus);
     display_layout->addWidget(d_->show_persistent_holes);
@@ -1475,7 +1571,9 @@ WlanBlockAckGraphDialog::WlanBlockAckGraphDialog(QWidget &parent, CaptureFile &c
             this, &WlanBlockAckGraphDialog::ssnLabelsToggled);
     connect(d_->show_time_deltas, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::timeDeltasToggled);
-    connect(d_->highlight_above_average, &QCheckBox::toggled,
+    connect(d_->highlight_unusual_gaps, &QCheckBox::toggled,
+            this, &WlanBlockAckGraphDialog::labelHighlightsToggled);
+    connect(d_->highlight_high_ssn_rates, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::labelHighlightsToggled);
     connect(d_->show_ack_gaps, &QCheckBox::toggled,
             this, &WlanBlockAckGraphDialog::ackGapsToggled);
@@ -1865,6 +1963,10 @@ tap_packet_status WlanBlockAckGraphDialog::tapPacket(void *dialog_ptr,
         sample.relative_time_nanoseconds =
                 static_cast<qint64>(pinfo->rel_ts.secs) *
                 nanoseconds_per_second + pinfo->rel_ts.nsecs;
+        if (pinfo->fd) {
+            sample.timestamp_quantum_nanoseconds =
+                    timestampQuantumNanoseconds(pinfo->fd->tsprec);
+        }
         sample.is_request = is_request;
         sample.explicit_fcs_error = explicit_fcs_error;
         sample.type = type;
@@ -2206,7 +2308,8 @@ void WlanBlockAckGraphDialog::drawSession()
         d_->show_acked_mpdu_rate->setEnabled(false);
         d_->acked_mpdu_bucket_label->setEnabled(false);
         d_->acked_mpdu_bucket_combo->setEnabled(false);
-        d_->highlight_above_average->setEnabled(false);
+        d_->highlight_unusual_gaps->setEnabled(false);
+        d_->highlight_high_ssn_rates->setEnabled(false);
         d_->show_ack_gaps->setEnabled(false);
         d_->show_mpdus->setEnabled(false);
         d_->show_persistent_holes->setEnabled(false);
@@ -2264,7 +2367,8 @@ void WlanBlockAckGraphDialog::drawSession()
     d_->acked_mpdu_bucket_combo->setEnabled(show_acked_mpdu_rate);
     d_->plot->yAxis2->setVisible(show_acked_mpdu_rate);
     d_->acked_mpdu_rate_graph->setVisible(show_acked_mpdu_rate);
-    d_->highlight_above_average->setEnabled(have_responses);
+    d_->highlight_unusual_gaps->setEnabled(have_responses);
+    d_->highlight_high_ssn_rates->setEnabled(have_responses);
     d_->show_ack_gaps->setEnabled(have_responses);
     d_->show_mpdus->setEnabled(mpdu_count > 0);
     d_->show_persistent_holes->setEnabled(have_responses);
@@ -2894,15 +2998,18 @@ void WlanBlockAckGraphDialog::updateLabelHighlights()
                 d_->anchor_unwrapped_sequences,
                 d_->displayed_agreement_events, key_range, value_range);
     const BaViewMetrics &view_metrics = d_->view_metrics;
-    bool have_average_delta = view_metrics.interval_count > 0;
     bool have_average_ssn_rate =
             view_metrics.ssn_rise_elapsed_nanoseconds > 0;
-    bool highlighting_enabled = d_->highlight_above_average->isChecked();
+    bool high_ssn_rate_highlighting_enabled =
+            d_->highlight_high_ssn_rates->isChecked();
+    bool unusual_gap_highlighting_enabled =
+            d_->highlight_unusual_gaps->isChecked();
 
     for (qsizetype anchor_index = 0;
          anchor_index < d_->ssn_labels.size(); anchor_index++) {
         bool highlight = false;
-        if (highlighting_enabled && have_average_ssn_rate &&
+        if (high_ssn_rate_highlighting_enabled &&
+            have_average_ssn_rate &&
             anchor_index < view_metrics.intervals.size()) {
             const BaIntervalMetrics &interval =
                     view_metrics.intervals.at(anchor_index);
@@ -2932,12 +3039,22 @@ void WlanBlockAckGraphDialog::updateLabelHighlights()
         if (anchor_index < view_metrics.intervals.size()) {
             const BaIntervalMetrics &interval =
                     view_metrics.intervals.at(anchor_index);
-            highlight = highlighting_enabled && have_average_delta &&
-                    interval.has_interval &&
+            long double timestamp_threshold =
                     static_cast<long double>(
-                        interval.interval_nanoseconds) *
-                    view_metrics.interval_count >
-                    view_metrics.interval_sum_nanoseconds;
+                        view_metrics.typical_gap_nanoseconds) +
+                    interval.timestamp_quantum_nanoseconds;
+            long double unusual_gap_threshold =
+                    std::max(
+                        view_metrics
+                        .unusual_gap_base_threshold_nanoseconds,
+                        timestamp_threshold);
+            highlight = unusual_gap_highlighting_enabled &&
+                    view_metrics.has_unusual_gap_threshold &&
+                    interval.has_interval &&
+                    interval.eligible_for_gap_outlier &&
+                    static_cast<long double>(
+                        interval.interval_nanoseconds) >
+                    unusual_gap_threshold;
         }
         setLabelHighlighted(d_->time_delta_labels.at(label_index), highlight);
     }
