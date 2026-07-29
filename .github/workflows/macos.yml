@@ -4,8 +4,16 @@ on: [push]
 
 jobs:
   macos:
-    name: Build & Test
-    runs-on: macos-latest
+    name: Build & Test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-26-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,5 +51,5 @@ jobs:
       - name: Upload dmg packages
         uses: actions/upload-artifact@v6
         with:
-          name: package
+          name: package-macos-${{ matrix.arch }}
           path: build/run/*dmg
